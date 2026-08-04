@@ -22,8 +22,10 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 MODELS = {
-    "Gemini 2.5 Flash-Lite": {"vendor": "google", "id": "gemini-2.5-flash-lite"},
-    "Gemini 2.5 Flash": {"vendor": "google", "id": "gemini-2.5-flash"},
+    "Gemini 2.5 Flash-Lite (AI Studio)": {"vendor": "google-aistudio", "id": "gemini-2.5-flash-lite"},
+    "Gemini 2.5 Flash (AI Studio)": {"vendor": "google-aistudio", "id": "gemini-2.5-flash"},
+    "Gemini 2.5 Flash-Lite (Vertex)": {"vendor": "google-vertex", "id": "gemini-2.5-flash-lite"},
+    "Gemini 2.5 Flash (Vertex)": {"vendor": "google-vertex", "id": "gemini-2.5-flash"},
     "Claude Haiku 4.5": {"vendor": "anthropic", "id": "claude-haiku-4-5-20251001"},
     "Claude Sonnet 5": {"vendor": "anthropic", "id": "claude-sonnet-5"},
 }
@@ -214,6 +216,58 @@ def call_gemini(model_id, key, prompt, transcript, temperature, force_json):
     return text, elapsed, usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
+def get_vertex_token(service_account_json):
+    """Exchanges a service-account key for a short-lived access token. Cached per session."""
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request
+
+    cache = st.session_state.setdefault("_vertex_token_cache", {})
+    cached = cache.get("token")
+    if cached and cache.get("expiry", 0) > time.time() + 60:
+        return cached
+
+    info = json.loads(service_account_json)
+    creds = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds.refresh(Request())
+
+    cache["token"] = creds.token
+    cache["expiry"] = creds.expiry.timestamp() if creds.expiry else time.time() + 3000
+    return creds.token
+
+
+def call_gemini_vertex(model_id, project_id, location, service_account_json,
+                       prompt, transcript, temperature, force_json):
+    token = get_vertex_token(service_account_json)
+
+    cfg = {"temperature": temperature, "thinkingConfig": {"thinkingBudget": 0}}
+    if force_json:
+        cfg["responseMimeType"] = "application/json"
+
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": f"{prompt}\n\nTRANSCRIPT:\n{transcript}"}]}],
+        "generationConfig": cfg,
+    }
+    url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
+          f"/locations/{location}/publishers/google/models/{model_id}:generateContent")
+
+    t0 = time.time()
+    r = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=body,
+        timeout=300,
+    )
+    elapsed = time.time() - t0
+    r.raise_for_status()
+    data = r.json()
+
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts)
+    usage = data.get("usageMetadata", {})
+    return text, elapsed, usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
+
+
 def call_anthropic(model_id, key, prompt, transcript, temperature):
     t0 = time.time()
     r = requests.post(
@@ -252,6 +306,14 @@ with st.sidebar:
     gemini_key = st.text_input("Google AI Studio", type="password", value=os.getenv("GEMINI_API_KEY", ""))
     anthropic_key = st.text_input("Anthropic", type="password", value=os.getenv("ANTHROPIC_API_KEY", ""))
 
+    with st.expander("Google Vertex AI (optional)"):
+        st.caption("Needs a GCP project with the Vertex AI API enabled and a service-account key.")
+        vertex_project = st.text_input("Project ID", value=os.getenv("VERTEX_PROJECT_ID", ""))
+        vertex_location = st.text_input("Location", value=os.getenv("VERTEX_LOCATION", "us-central1"))
+        vertex_sa_json = st.text_area(
+            "Service account JSON", value=os.getenv("VERTEX_SA_JSON", ""), height=100,
+            help="Paste the full contents of the .json key file you downloaded from GCP.")
+
     st.divider()
     st.header("Transcription")
     stt_mode = st.selectbox(
@@ -274,14 +336,15 @@ with st.sidebar:
                              help="Applies your post-processing rules on top of the raw model output.")
 
     with st.expander("Pricing (₹ per 1M tokens)"):
-        st.caption("Estimates. Edit to match your current rates.")
+        st.caption("Estimates. Edit to match your current rates. "
+                   "AI Studio and Vertex share the same per-token price for the same model.")
         pricing = {}
         for label, m in MODELS.items():
             c1, c2 = st.columns(2)
             d_in, d_out = DEFAULT_PRICING[m["id"]]
             pricing[m["id"]] = (
-                c1.number_input(f"{label} in", value=d_in, key=f"pi_{m['id']}"),
-                c2.number_input(f"{label} out", value=d_out, key=f"po_{m['id']}"),
+                c1.number_input(f"{label} in", value=d_in, key=f"pi_{label}"),
+                c2.number_input(f"{label} out", value=d_out, key=f"po_{label}"),
             )
 
 # ----------------------------------------------------------------------------
@@ -416,7 +479,7 @@ pc2.download_button("Save prompt", prompt_text or " ", file_name=f"{prompt_versi
 st.subheader("4 · Run models")
 
 chosen = st.multiselect("Models", list(MODELS.keys()),
-                        default=["Gemini 2.5 Flash-Lite", "Claude Haiku 4.5"])
+                        default=["Gemini 2.5 Flash-Lite (AI Studio)", "Claude Haiku 4.5"])
 
 run_col, clear_col = st.columns([1, 4])
 run_now = run_col.button("Run selected", type="primary",
@@ -427,16 +490,29 @@ if clear_col.button("Clear results"):
 if run_now:
     for label in chosen:
         m = MODELS[label]
-        key = gemini_key if m["vendor"] == "google" else anthropic_key
+
+        if m["vendor"] == "google-aistudio":
+            key = gemini_key
+        elif m["vendor"] == "google-vertex":
+            key = vertex_sa_json and vertex_project and vertex_location
+        else:
+            key = anthropic_key
+
         if not key:
-            st.error(f"{label} needs its API key in the sidebar.")
+            missing = ("its Vertex project/location/service-account JSON"
+                      if m["vendor"] == "google-vertex" else "its API key")
+            st.error(f"{label} needs {missing} in the sidebar.")
             continue
 
         with st.spinner(f"{label} running"):
             try:
-                if m["vendor"] == "google":
+                if m["vendor"] == "google-aistudio":
                     text, elapsed, t_in, t_out = call_gemini(
                         m["id"], key, prompt_text, st.session_state.transcript, temperature, force_json)
+                elif m["vendor"] == "google-vertex":
+                    text, elapsed, t_in, t_out = call_gemini_vertex(
+                        m["id"], vertex_project, vertex_location, vertex_sa_json,
+                        prompt_text, st.session_state.transcript, temperature, force_json)
                 else:
                     text, elapsed, t_in, t_out = call_anthropic(
                         m["id"], key, prompt_text, st.session_state.transcript, temperature)
