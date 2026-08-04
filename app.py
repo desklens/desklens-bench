@@ -42,6 +42,16 @@ RUNS_FILE = "runs.jsonl"
 
 st.set_page_config(page_title="DeskLens Bench", layout="wide")
 
+
+def get_secret(name, default=""):
+    """Checks Streamlit's Secrets manager first, then environment variables, then falls back."""
+    try:
+        if name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
 # ----------------------------------------------------------------------------
 # State
 # ----------------------------------------------------------------------------
@@ -216,6 +226,27 @@ def call_gemini(model_id, key, prompt, transcript, temperature, force_json):
     return text, elapsed, usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
+def load_service_account_json(raw):
+    """Accepts either raw JSON (paste from the file) or base64-encoded JSON
+    (safer against editors mangling newlines inside the private key)."""
+    raw = raw.strip()
+    if not raw:
+        raise ValueError("Service account JSON is empty.")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        import base64
+        try:
+            decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            raise ValueError(
+                f"Could not parse the service account JSON ({e}). "
+                "If you pasted the raw .json file and this keeps happening, "
+                "use the base64 version instead — see setup notes."
+            )
+
+
 def get_vertex_token(service_account_json):
     """Exchanges a service-account key for a short-lived access token. Cached per session."""
     from google.oauth2 import service_account
@@ -226,7 +257,7 @@ def get_vertex_token(service_account_json):
     if cached and cache.get("expiry", 0) > time.time() + 60:
         return cached
 
-    info = json.loads(service_account_json)
+    info = load_service_account_json(service_account_json)
     creds = service_account.Credentials.from_service_account_info(
         info, scopes=["https://www.googleapis.com/auth/cloud-platform"])
     creds.refresh(Request())
@@ -302,16 +333,16 @@ def call_anthropic(model_id, key, prompt, transcript, temperature):
 with st.sidebar:
     st.header("Keys")
     st.caption("Stored only for this browser session. Nothing is written to disk.")
-    sarvam_key = st.text_input("Sarvam", type="password", value=os.getenv("SARVAM_API_KEY", ""))
-    gemini_key = st.text_input("Google AI Studio", type="password", value=os.getenv("GEMINI_API_KEY", ""))
-    anthropic_key = st.text_input("Anthropic", type="password", value=os.getenv("ANTHROPIC_API_KEY", ""))
+    sarvam_key = st.text_input("Sarvam", type="password", value=get_secret("SARVAM_API_KEY"))
+    gemini_key = st.text_input("Google AI Studio", type="password", value=get_secret("GEMINI_API_KEY"))
+    anthropic_key = st.text_input("Anthropic", type="password", value=get_secret("ANTHROPIC_API_KEY"))
 
     with st.expander("Google Vertex AI (optional)"):
         st.caption("Needs a GCP project with the Vertex AI API enabled and a service-account key.")
-        vertex_project = st.text_input("Project ID", value=os.getenv("VERTEX_PROJECT_ID", ""))
-        vertex_location = st.text_input("Location", value=os.getenv("VERTEX_LOCATION", "us-central1"))
+        vertex_project = st.text_input("Project ID", value=get_secret("VERTEX_PROJECT_ID"))
+        vertex_location = st.text_input("Location", value=get_secret("VERTEX_LOCATION", "us-central1"))
         vertex_sa_json = st.text_area(
-            "Service account JSON", value=os.getenv("VERTEX_SA_JSON", ""), height=100,
+            "Service account JSON", value=get_secret("VERTEX_SA_JSON"), height=100,
             help="Paste the full contents of the .json key file you downloaded from GCP.")
 
     st.divider()
