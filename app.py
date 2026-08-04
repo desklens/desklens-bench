@@ -690,5 +690,16 @@ if os.path.exists(RUNS_FILE):
             pd.DataFrame([{k: v for k, v in h.items() if k != "output"} for h in history]),
             use_container_width=True, hide_index=True,
         )
-        st.download_button("Download history", open(RUNS_FILE, encoding="utf-8").read(),
-                           file_name="desklens_runs.jsonl")
+        hc1, hc2 = st.columns([1, 1])
+        hc1.download_button("Download history", open(RUNS_FILE, encoding="utf-8").read(),
+                            file_name="desklens_runs.jsonl")
+        if hc2.button("Clear history", type="secondary",
+                      help="Deletes all logged runs. Download first if you want to keep them."):
+            if st.session_state.get("_confirm_clear_history"):
+                os.remove(RUNS_FILE)
+                st.session_state["_confirm_clear_history"] = False
+                st.rerun()
+            else:
+                st.session_state["_confirm_clear_history"] = True
+        if st.session_state.get("_confirm_clear_history"):
+            st.warning("This deletes all run history permanently. Press **Clear history** once more to confirm.")
