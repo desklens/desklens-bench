@@ -1,35 +1,67 @@
 """
-DeskLens Bench (Gradio) — prompt and model test bench.
+DeskLens Bench — prompt and model test bench.
 Audio -> Sarvam Saaras v3 -> extraction models -> side-by-side comparison.
 """
 
 import json
 import os
 import re
+import tempfile
 import time
 
-import gradio as gr
 import pandas as pd
 import requests
+import streamlit as st
+
+# ----------------------------------------------------------------------------
+# Config
+# ----------------------------------------------------------------------------
 
 SARVAM_BASE = "https://api.sarvam.ai"
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-RUNS_FILE = "runs.jsonl"
 
 MODELS = {
-    "Gemini 2.5 Flash-Lite": ("google", "gemini-2.5-flash-lite", 9.0, 36.0),
-    "Gemini 2.5 Flash": ("google", "gemini-2.5-flash", 27.0, 216.0),
-    "Claude Haiku 4.5": ("anthropic", "claude-haiku-4-5-20251001", 90.0, 450.0),
-    "Claude Sonnet 5": ("anthropic", "claude-sonnet-5", 270.0, 1350.0),
+    "Gemini 2.5 Flash-Lite": {"vendor": "google", "id": "gemini-2.5-flash-lite"},
+    "Gemini 2.5 Flash": {"vendor": "google", "id": "gemini-2.5-flash"},
+    "Claude Haiku 4.5": {"vendor": "anthropic", "id": "claude-haiku-4-5-20251001"},
+    "Claude Sonnet 5": {"vendor": "anthropic", "id": "claude-sonnet-5"},
 }
-MODEL_NAMES = list(MODELS.keys())
-MAX_PANELS = 4
+
+# Editable in the sidebar. Rupees per 1,000,000 tokens.
+DEFAULT_PRICING = {
+    "gemini-2.5-flash-lite": (9.0, 36.0),
+    "gemini-2.5-flash": (27.0, 216.0),
+    "claude-haiku-4-5-20251001": (90.0, 450.0),
+    "claude-sonnet-5": (270.0, 1350.0),
+}
+
+RUNS_FILE = "runs.jsonl"
+
+st.set_page_config(page_title="DeskLens Bench", layout="wide")
+
+# ----------------------------------------------------------------------------
+# State
+# ----------------------------------------------------------------------------
+
+defaults = {
+    "transcript": "",
+    "stt_language": "",
+    "stt_raw": None,
+    "diarized": None,
+    "results": {},
+    "audio_seconds": 0.0,
+}
+for k, v in defaults.items():
+    st.session_state.setdefault(k, v)
 
 
-# ---------------------------------------------------------------- helpers ---
+# ----------------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------------
 
 def parse_json_loose(text):
+    """Models sometimes wrap JSON in fences or prose. Pull out the object."""
     if not text:
         return None, "Model returned nothing."
     cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
@@ -47,6 +79,7 @@ def parse_json_loose(text):
 
 
 def flatten(obj, prefix=""):
+    """Turn nested JSON into flat field paths so two outputs can be compared."""
     out = {}
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -63,6 +96,7 @@ def flatten(obj, prefix=""):
 
 
 def apply_pipeline_rules(data, stt_language):
+    """The post-processing your production code does. Kept separate from the model."""
     if not isinstance(data, dict):
         return data, []
     d = json.loads(json.dumps(data))
@@ -70,7 +104,7 @@ def apply_pipeline_rules(data, stt_language):
 
     if "language" in d and stt_language:
         if d["language"] != stt_language:
-            changes.append(f"language: {d['language']} -> {stt_language} (from STT metadata)")
+            changes.append(f"language: `{d['language']}` -> `{stt_language}` (from STT metadata)")
         d["language"] = stt_language
 
     kp = d.get("key_phrases")
@@ -88,71 +122,86 @@ def apply_pipeline_rules(data, stt_language):
     return d, changes
 
 
-def rupees(model_name, t_in, t_out, price_overrides):
-    _, mid, d_in, d_out = MODELS[model_name]
-    p_in, p_out = price_overrides.get(mid, (d_in, d_out))
-    return (t_in / 1_000_000) * p_in + (t_out / 1_000_000) * p_out
+def rupees(model_id, tokens_in, tokens_out, pricing):
+    p_in, p_out = pricing.get(model_id, (0.0, 0.0))
+    return (tokens_in / 1_000_000) * p_in + (tokens_out / 1_000_000) * p_out
 
 
-# ------------------------------------------------------------- API calls ---
+# ----------------------------------------------------------------------------
+# API calls
+# ----------------------------------------------------------------------------
 
-def sarvam_rest(path, key, mode, language_code):
-    with open(path, "rb") as fh:
-        r = requests.post(
-            f"{SARVAM_BASE}/speech-to-text",
-            headers={"api-subscription-key": key},
-            files={"file": (os.path.basename(path), fh)},
-            data={"model": "saaras:v3", "mode": mode, "language_code": language_code},
-            timeout=180,
-        )
+def sarvam_rest(audio_bytes, filename, key, mode, language_code):
+    """Synchronous. Files under 30 seconds only."""
+    r = requests.post(
+        f"{SARVAM_BASE}/speech-to-text",
+        headers={"api-subscription-key": key},
+        files={"file": (filename, audio_bytes)},
+        data={"model": "saaras:v3", "mode": mode, "language_code": language_code},
+        timeout=180,
+    )
     r.raise_for_status()
     return r.json()
 
 
-def sarvam_batch(paths, key, mode, language_code, diarize, num_speakers):
+def sarvam_batch(files, key, mode, language_code, diarize, num_speakers, progress):
+    """Asynchronous job. Files up to 2 hours, and the only path that returns diarization."""
     from sarvamai import SarvamAI
 
     client = SarvamAI(api_subscription_key=key)
     kwargs = {"model": "saaras:v3", "mode": mode, "language_code": language_code}
     if diarize:
         kwargs["with_diarization"] = True
-        kwargs["num_speakers"] = int(num_speakers)
+        kwargs["num_speakers"] = num_speakers
 
+    progress("Creating job")
     job = client.speech_to_text_job.create_job(**kwargs)
-    job.upload_files(file_paths=paths)
-    job.start()
-    job.wait_until_complete()
 
-    results = job.get_file_results()
-    out_dir = os.path.join(os.getcwd(), f"stt_out_{int(time.time())}")
-    os.makedirs(out_dir, exist_ok=True)
-    if results.get("successful"):
-        job.download_outputs(output_dir=out_dir)
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for f in files:
+            p = os.path.join(tmp, f.name)
+            with open(p, "wb") as fh:
+                fh.write(f.getvalue())
+            paths.append(p)
 
-    payloads = []
-    for name in sorted(os.listdir(out_dir)):
-        if name.endswith(".json"):
-            with open(os.path.join(out_dir, name), encoding="utf-8") as fh:
-                payloads.append(json.load(fh))
+        progress(f"Uploading {len(paths)} file(s)")
+        job.upload_files(file_paths=paths)
+        job.start()
 
-    failures = [f"{f['file_name']}: {f.get('error_message')}" for f in results.get("failed", [])]
-    return payloads, failures
+        progress("Sarvam is transcribing. This takes a few minutes for a long call.")
+        job.wait_until_complete()
+
+        results = job.get_file_results()
+        out_dir = os.path.join(tmp, "out")
+        os.makedirs(out_dir, exist_ok=True)
+        if results.get("successful"):
+            job.download_outputs(output_dir=out_dir)
+
+        payloads = []
+        for name in sorted(os.listdir(out_dir)):
+            if name.endswith(".json"):
+                with open(os.path.join(out_dir, name), encoding="utf-8") as fh:
+                    payloads.append(json.load(fh))
+
+        failures = [f"{f['file_name']}: {f.get('error_message')}" for f in results.get("failed", [])]
+        return payloads, failures
 
 
 def call_gemini(model_id, key, prompt, transcript, temperature, force_json):
-    cfg = {"temperature": float(temperature), "thinkingConfig": {"thinkingBudget": 0}}
+    cfg = {"temperature": temperature, "thinkingConfig": {"thinkingBudget": 0}}
     if force_json:
         cfg["responseMimeType"] = "application/json"
 
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": f"{prompt}\n\nTRANSCRIPT:\n{transcript}"}]}],
+        "generationConfig": cfg,
+    }
     t0 = time.time()
     r = requests.post(
         f"{GEMINI_BASE}/{model_id}:generateContent",
         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-        json={
-            "contents": [{"role": "user",
-                          "parts": [{"text": f"{prompt}\n\nTRANSCRIPT:\n{transcript}"}]}],
-            "generationConfig": cfg,
-        },
+        json=body,
         timeout=300,
     )
     elapsed = time.time() - t0
@@ -161,19 +210,23 @@ def call_gemini(model_id, key, prompt, transcript, temperature, force_json):
 
     parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts)
-    u = data.get("usageMetadata", {})
-    return text, elapsed, u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0)
+    usage = data.get("usageMetadata", {})
+    return text, elapsed, usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
 def call_anthropic(model_id, key, prompt, transcript, temperature):
     t0 = time.time()
     r = requests.post(
         ANTHROPIC_URL,
-        headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                 "Content-Type": "application/json"},
+        headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
         json={
-            "model": model_id, "max_tokens": 4000,
-            "temperature": min(float(temperature), 1.0),
+            "model": model_id,
+            "max_tokens": 4000,
+            "temperature": min(temperature, 1.0),
             "system": prompt,
             "messages": [{"role": "user", "content": f"TRANSCRIPT:\n{transcript}"}],
         },
@@ -184,317 +237,312 @@ def call_anthropic(model_id, key, prompt, transcript, temperature):
     data = r.json()
 
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
-    u = data.get("usage", {})
-    return text, elapsed, u.get("input_tokens", 0), u.get("output_tokens", 0)
+    usage = data.get("usage", {})
+    return text, elapsed, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
 
 
-# ------------------------------------------------------------- callbacks ---
+# ----------------------------------------------------------------------------
+# Sidebar
+# ----------------------------------------------------------------------------
 
-def do_transcribe(files, key, mode, language_code, use_batch, diarize, num_speakers,
-                  progress=gr.Progress()):
-    empty = ("", "", None, None)
-    if not files:
-        return "Add at least one recording first.", *empty
-    if not key:
-        return "Add your Sarvam key in **Keys and settings** at the top.", *empty
+with st.sidebar:
+    st.header("Keys")
+    st.caption("Stored only for this browser session. Nothing is written to disk.")
+    sarvam_key = st.text_input("Sarvam", type="password", value=os.getenv("SARVAM_API_KEY", ""))
+    gemini_key = st.text_input("Google AI Studio", type="password", value=os.getenv("GEMINI_API_KEY", ""))
+    anthropic_key = st.text_input("Anthropic", type="password", value=os.getenv("ANTHROPIC_API_KEY", ""))
 
-    paths = [f if isinstance(f, str) else f.name for f in files]
+    st.divider()
+    st.header("Transcription")
+    stt_mode = st.selectbox(
+        "Mode", ["translate", "transcribe", "codemix", "translit", "verbatim"],
+        help="translate gives English. codemix keeps Hinglish as spoken.",
+    )
+    language_code = st.text_input("Language code", value="unknown",
+                                  help="'unknown' lets Sarvam detect it.")
+    use_batch = st.toggle("Batch API", value=True,
+                          help="On: files up to 2 hours, diarization available. Off: fast, but under 30 seconds only.")
+    diarize = st.toggle("Speaker diarization", value=True, disabled=not use_batch)
+    num_speakers = st.number_input("Speakers", 2, 20, 2, disabled=not (use_batch and diarize))
 
-    try:
-        if use_batch:
-            progress(0.2, desc="Sarvam is transcribing — a few minutes for a long call")
-            payloads, failures = sarvam_batch(paths, key, mode, language_code, diarize, num_speakers)
-            note = ""
-            if failures:
-                note = "\n\nCould not process: " + "; ".join(failures)
-            if not payloads:
-                return "No transcripts came back." + note, *empty
-        else:
-            progress(0.5, desc="Sending to the REST endpoint")
-            payloads = [sarvam_rest(paths[0], key, mode, language_code)]
-            note = "" if len(paths) == 1 else "\n\nREST mode used only the first file."
+    st.divider()
+    st.header("Extraction")
+    temperature = st.slider("Temperature", 0.0, 2.0, 0.0, 0.1,
+                            help="Keep at 0 for strict extraction. Anthropic caps at 1.")
+    force_json = st.toggle("Force JSON output (Gemini)", value=True)
+    clean_output = st.toggle("Show pipeline-cleaned output", value=True,
+                             help="Applies your post-processing rules on top of the raw model output.")
 
-        first = payloads[0]
-        transcript = first.get("transcript", "")
-        lang = first.get("language_code", "")
-        diar = first.get("diarized_transcript")
+    with st.expander("Pricing (₹ per 1M tokens)"):
+        st.caption("Estimates. Edit to match your current rates.")
+        pricing = {}
+        for label, m in MODELS.items():
+            c1, c2 = st.columns(2)
+            d_in, d_out = DEFAULT_PRICING[m["id"]]
+            pricing[m["id"]] = (
+                c1.number_input(f"{label} in", value=d_in, key=f"pi_{m['id']}"),
+                c2.number_input(f"{label} out", value=d_out, key=f"po_{m['id']}"),
+            )
 
-        rows = []
-        if diar:
-            for e in diar.get("entries", []):
-                rows.append([e.get("speaker_id"),
-                             round(e.get("start_time_seconds", 0), 2),
-                             round(e.get("end_time_seconds", 0), 2),
-                             e.get("transcript", "")])
-        df = pd.DataFrame(rows, columns=["speaker", "start", "end", "text"]) if rows else None
+# ----------------------------------------------------------------------------
+# Step 1 — audio
+# ----------------------------------------------------------------------------
 
-        speakers = len({r[0] for r in rows}) if rows else 0
-        msg = (f"**{len(payloads)} transcript(s) ready.** Language `{lang or 'not reported'}`, "
-               f"{len(transcript)} characters, {speakers or '—'} speaker(s).\n\n"
-               f"Your `language` field must be `{lang}` — copied from this metadata, "
-               f"never guessed from the text." + note)
+st.title("DeskLens Bench")
+st.caption("Audio → Sarvam Saaras v3 → extraction → compare. Every stage shows its raw output.")
 
-        return msg, transcript, lang, df, payloads
+st.subheader("1 · Audio")
+tab_audio, tab_paste = st.tabs(["Upload recordings", "Paste a transcript"])
 
-    except requests.HTTPError as e:
-        return f"Sarvam refused: {e.response.status_code} — {e.response.text[:500]}", *empty
-    except Exception as e:
-        return f"Transcription failed: {e}", *empty
+with tab_audio:
+    uploads = st.file_uploader(
+        "Drop call recordings here",
+        type=["mp3", "wav", "m4a", "aac", "ogg", "opus", "flac", "amr", "webm"],
+        accept_multiple_files=True,
+        help="Up to 20 files per batch job. Download them from Drive first.",
+    )
+    if uploads:
+        st.write(f"{len(uploads)} file(s) ready.")
+        if st.button("Transcribe with Sarvam", type="primary"):
+            if not sarvam_key:
+                st.error("Add your Sarvam key in the sidebar first.")
+            else:
+                status = st.status("Starting", expanded=True)
+                try:
+                    if use_batch:
+                        payloads, failures = sarvam_batch(
+                            uploads, sarvam_key, stt_mode, language_code,
+                            diarize, num_speakers, lambda m: status.write(m),
+                        )
+                        for f in failures:
+                            st.warning(f"Sarvam could not process {f}")
+                        if not payloads:
+                            status.update(label="No transcripts came back", state="error")
+                        else:
+                            first = payloads[0]
+                            st.session_state.stt_raw = payloads
+                            st.session_state.transcript = first.get("transcript", "")
+                            st.session_state.stt_language = first.get("language_code", "")
+                            st.session_state.diarized = first.get("diarized_transcript")
+                            status.update(label=f"{len(payloads)} transcript(s) ready", state="complete")
+                    else:
+                        f = uploads[0]
+                        status.write("Sending to the REST endpoint")
+                        payload = sarvam_rest(f.getvalue(), f.name, sarvam_key, stt_mode, language_code)
+                        st.session_state.stt_raw = [payload]
+                        st.session_state.transcript = payload.get("transcript", "")
+                        st.session_state.stt_language = payload.get("language_code", "")
+                        st.session_state.diarized = payload.get("diarized_transcript")
+                        status.update(label="Transcript ready", state="complete")
+                except requests.HTTPError as e:
+                    status.update(label="Sarvam rejected the request", state="error")
+                    st.error(f"{e.response.status_code}: {e.response.text[:600]}")
+                except Exception as e:
+                    status.update(label="Transcription failed", state="error")
+                    st.error(str(e))
 
+with tab_paste:
+    pasted = st.text_area("Transcript", height=180, placeholder="Paste a transcript to skip Sarvam.")
+    lang_manual = st.text_input("STT language code", value="", placeholder="en-IN")
+    if st.button("Use this transcript"):
+        st.session_state.transcript = pasted
+        st.session_state.stt_language = lang_manual
+        st.session_state.stt_raw = None
+        st.session_state.diarized = None
+        st.success("Loaded.")
 
-def load_pasted(text, lang):
-    if not text.strip():
-        return "Nothing to load.", "", ""
-    return f"Loaded {len(text)} characters.", text, lang
+# ----------------------------------------------------------------------------
+# Step 2 — transcript
+# ----------------------------------------------------------------------------
 
+if st.session_state.transcript:
+    st.subheader("2 · Transcript")
 
-def do_run(transcript, stt_lang, prompt, version, chosen, temperature, force_json, clean_output,
-           k_gemini, k_anthropic, p1i, p1o, p2i, p2o, p3i, p3o, p4i, p4o,
-           progress=gr.Progress()):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Detected language", st.session_state.stt_language or "—")
+    c2.metric("Characters", len(st.session_state.transcript))
+    c3.metric("Speakers found", len({e.get("speaker_id") for e in
+                                     (st.session_state.diarized or {}).get("entries", [])}) or "—")
 
-    blanks = [gr.update(visible=False), gr.update(value=None)] * MAX_PANELS
-    nothing = [None, *blanks, None, None]
+    if st.session_state.stt_language:
+        st.info(f"`language` should be **{st.session_state.stt_language}**, taken from this metadata — "
+                "never inferred from the transcript text.")
 
-    if not transcript.strip():
-        return "Transcribe something first, or paste a transcript.", *nothing
-    if not prompt.strip():
-        return "Paste your extraction prompt in step 2.", *nothing
-    if not chosen:
-        return "Pick at least one model.", *nothing
+    edited = st.text_area("Transcript (editable)", st.session_state.transcript, height=220)
+    if edited != st.session_state.transcript:
+        st.session_state.transcript = edited
 
-    overrides = {
-        MODELS[MODEL_NAMES[0]][1]: (p1i, p1o),
-        MODELS[MODEL_NAMES[1]][1]: (p2i, p2o),
-        MODELS[MODEL_NAMES[2]][1]: (p3i, p3o),
-        MODELS[MODEL_NAMES[3]][1]: (p4i, p4o),
-    }
+    if st.session_state.diarized:
+        with st.expander("Diarized turns"):
+            rows = [
+                {
+                    "speaker": e.get("speaker_id"),
+                    "start": round(e.get("start_time_seconds", 0), 2),
+                    "end": round(e.get("end_time_seconds", 0), 2),
+                    "text": e.get("transcript", ""),
+                }
+                for e in st.session_state.diarized.get("entries", [])
+            ]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    results, notes = {}, []
-    for i, name in enumerate(chosen):
-        vendor, mid, _, _ = MODELS[name]
-        key = k_gemini if vendor == "google" else k_anthropic
+    if st.session_state.stt_raw:
+        with st.expander("Raw Sarvam response"):
+            st.json(st.session_state.stt_raw)
+
+# ----------------------------------------------------------------------------
+# Step 3 — prompt
+# ----------------------------------------------------------------------------
+
+st.subheader("3 · Prompt")
+
+prompt_file = st.file_uploader("Load a saved prompt", type=["txt", "md"], key="prompt_upload")
+if prompt_file:
+    st.session_state.prompt_text = prompt_file.getvalue().decode("utf-8")
+
+pc1, pc2 = st.columns([3, 1])
+prompt_text = pc1.text_area(
+    "Extraction prompt",
+    value=st.session_state.get("prompt_text", ""),
+    height=280,
+    placeholder="Paste your derma_v6 prompt here.",
+)
+prompt_version = pc2.text_input("Version label", value="derma_v6")
+pc2.download_button("Save prompt", prompt_text or " ", file_name=f"{prompt_version}.txt")
+
+# ----------------------------------------------------------------------------
+# Step 4 — run
+# ----------------------------------------------------------------------------
+
+st.subheader("4 · Run models")
+
+chosen = st.multiselect("Models", list(MODELS.keys()),
+                        default=["Gemini 2.5 Flash-Lite", "Claude Haiku 4.5"])
+
+run_col, clear_col = st.columns([1, 4])
+run_now = run_col.button("Run selected", type="primary",
+                         disabled=not (st.session_state.transcript and prompt_text and chosen))
+if clear_col.button("Clear results"):
+    st.session_state.results = {}
+
+if run_now:
+    for label in chosen:
+        m = MODELS[label]
+        key = gemini_key if m["vendor"] == "google" else anthropic_key
         if not key:
-            notes.append(f"{name} skipped — no API key.")
+            st.error(f"{label} needs its API key in the sidebar.")
             continue
 
-        progress((i + 1) / (len(chosen) + 1), desc=f"{name} running")
-        try:
-            if vendor == "google":
-                text, secs, t_in, t_out = call_gemini(mid, key, prompt, transcript,
-                                                      temperature, force_json)
+        with st.spinner(f"{label} running"):
+            try:
+                if m["vendor"] == "google":
+                    text, elapsed, t_in, t_out = call_gemini(
+                        m["id"], key, prompt_text, st.session_state.transcript, temperature, force_json)
+                else:
+                    text, elapsed, t_in, t_out = call_anthropic(
+                        m["id"], key, prompt_text, st.session_state.transcript, temperature)
+
+                parsed, err = parse_json_loose(text)
+                cleaned, changes = apply_pipeline_rules(parsed, st.session_state.stt_language) if parsed else (None, [])
+
+                st.session_state.results[label] = {
+                    "model_id": m["id"], "raw_text": text, "parsed": parsed, "cleaned": cleaned,
+                    "changes": changes, "error": err, "seconds": elapsed,
+                    "tokens_in": t_in, "tokens_out": t_out,
+                    "cost": rupees(m["id"], t_in, t_out, pricing),
+                }
+
+                with open(RUNS_FILE, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prompt_version": prompt_version, "model": label,
+                        "temperature": temperature, "stt_language": st.session_state.stt_language,
+                        "seconds": round(elapsed, 2), "tokens_in": t_in, "tokens_out": t_out,
+                        "output": parsed,
+                    }, ensure_ascii=False) + "\n")
+
+            except requests.HTTPError as e:
+                st.error(f"{label} — {e.response.status_code}: {e.response.text[:400]}")
+            except Exception as e:
+                st.error(f"{label} — {e}")
+
+# ----------------------------------------------------------------------------
+# Step 5 — compare
+# ----------------------------------------------------------------------------
+
+if st.session_state.results:
+    st.subheader("5 · Compare")
+
+    summary = pd.DataFrame([
+        {
+            "Model": k, "JSON parsed": "yes" if v["parsed"] else "no",
+            "Seconds": round(v["seconds"], 2), "Tokens in": v["tokens_in"],
+            "Tokens out": v["tokens_out"], "₹ per call": round(v["cost"], 4),
+            "₹ per 1000 calls": round(v["cost"] * 1000, 2),
+        }
+        for k, v in st.session_state.results.items()
+    ])
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    labels = list(st.session_state.results.keys())
+    cols = st.columns(len(labels))
+    for col, label in zip(cols, labels):
+        r = st.session_state.results[label]
+        with col:
+            st.markdown(f"**{label}**")
+            if r["error"]:
+                st.error(r["error"])
+                st.code(r["raw_text"][:1500])
             else:
-                text, secs, t_in, t_out = call_anthropic(mid, key, prompt, transcript, temperature)
+                show = r["cleaned"] if (clean_output and r["cleaned"]) else r["parsed"]
+                st.json(show, expanded=True)
+                if clean_output and r["changes"]:
+                    st.caption("Pipeline changed: " + "; ".join(r["changes"]))
 
-            parsed, err = parse_json_loose(text)
-            cleaned, changes = apply_pipeline_rules(parsed, stt_lang) if parsed else (None, [])
-
-            results[name] = {"parsed": parsed, "cleaned": cleaned, "changes": changes,
-                             "error": err, "raw_text": text, "seconds": secs,
-                             "t_in": t_in, "t_out": t_out,
-                             "cost": rupees(name, t_in, t_out, overrides)}
-
-            with open(RUNS_FILE, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "prompt_version": version,
-                    "model": name, "temperature": temperature, "stt_language": stt_lang,
-                    "seconds": round(secs, 2), "tokens_in": t_in, "tokens_out": t_out,
-                    "output": parsed,
-                }, ensure_ascii=False) + "\n")
-
-        except requests.HTTPError as e:
-            notes.append(f"{name} — {e.response.status_code}: {e.response.text[:300]}")
-        except Exception as e:
-            notes.append(f"{name} — {e}")
-
-    if not results:
-        return "Nothing ran.\n\n" + "\n\n".join(notes), *nothing
-
-    summary = pd.DataFrame([{
-        "Model": k,
-        "JSON parsed": "yes" if v["parsed"] else "no",
-        "Seconds": round(v["seconds"], 2),
-        "Tokens in": v["t_in"], "Tokens out": v["t_out"],
-        "₹ per call": round(v["cost"], 4),
-        "₹ per 1000 calls": round(v["cost"] * 1000, 2),
-    } for k, v in results.items()])
-
-    panels = []
-    for i in range(MAX_PANELS):
-        if i < len(results):
-            name = list(results)[i]
-            v = results[name]
-            label = f"### {name}"
-            if v["error"]:
-                label += f"\n\n**{v['error']}**\n\n```\n{v['raw_text'][:800]}\n```"
-                payload = None
-            else:
-                payload = v["cleaned"] if (clean_output and v["cleaned"]) else v["parsed"]
-                if clean_output and v["changes"]:
-                    label += "\n\nPipeline changed: " + "; ".join(v["changes"])
-            panels += [gr.update(value=label, visible=True), gr.update(value=payload)]
-        else:
-            panels += [gr.update(visible=False), gr.update(value=None)]
-
-    ok = {k: v for k, v in results.items() if v["parsed"]}
-    diff_df = None
-    if len(ok) >= 2:
+    parsed_ok = {k: v for k, v in st.session_state.results.items() if v["parsed"]}
+    if len(parsed_ok) >= 2:
+        st.markdown("**Field-by-field**")
         flats = {k: flatten(v["cleaned"] if (clean_output and v["cleaned"]) else v["parsed"])
-                 for k, v in ok.items()}
+                 for k, v in parsed_ok.items()}
         fields = sorted({f for d in flats.values() for f in d})
+
         rows = []
         for f in fields:
             vals = {k: d.get(f, "—") for k, d in flats.items()}
-            agree = len({json.dumps(v, ensure_ascii=False, sort_keys=True)
-                         for v in vals.values()}) == 1
-            if not agree:
-                rows.append({"Field": f, **{k: str(v) for k, v in vals.items()}})
-        diff_df = pd.DataFrame(rows) if rows else pd.DataFrame(
-            [{"Field": "Every field matches across models."}])
+            agree = len({json.dumps(v, ensure_ascii=False, sort_keys=True) for v in vals.values()}) == 1
+            rows.append({"Field": f, "Agree": "" if agree else "differs", **vals})
 
-    out_path = f"bench_{version or 'run'}_{time.strftime('%Y%m%d_%H%M%S')}.json"
-    with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump({"prompt_version": version, "temperature": temperature,
-                   "stt_language": stt_lang, "transcript": transcript,
-                   "results": {k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
-                               for k, v in results.items()}},
-                  fh, ensure_ascii=False, indent=2)
+        diff_only = st.checkbox("Show differences only", value=True)
+        table = pd.DataFrame(rows)
+        if diff_only:
+            table = table[table["Agree"] == "differs"]
+        if table.empty:
+            st.success("Every field matches across models.")
+        else:
+            st.dataframe(table, use_container_width=True, hide_index=True)
 
-    msg = f"Ran {len(results)} model(s)."
-    if notes:
-        msg += "\n\n" + "\n\n".join(notes)
-
-    return msg, *panels, summary, diff_df, out_path
-
-
-def load_history():
-    if not os.path.exists(RUNS_FILE):
-        return pd.DataFrame([{"info": "No runs yet."}]), None
-    rows = []
-    with open(RUNS_FILE, encoding="utf-8") as fh:
-        for line in fh:
-            if line.strip():
-                h = json.loads(line)
-                rows.append({k: v for k, v in h.items() if k != "output"})
-    return pd.DataFrame(rows), RUNS_FILE
-
-
-# ------------------------------------------------------------------- app ---
-
-with gr.Blocks(title="DeskLens Bench") as demo:
-    gr.Markdown("# DeskLens Bench\nAudio → Sarvam Saaras v3 → extraction → compare. "
-                "Every stage shows its raw output.")
-
-    stt_payloads = gr.State(None)
-
-    with gr.Accordion("Keys and settings", open=True):
-        with gr.Row():
-            k_sarvam = gr.Textbox(label="Sarvam key", type="password",
-                                  value=os.getenv("SARVAM_API_KEY", ""))
-            k_gemini = gr.Textbox(label="Google AI Studio key", type="password",
-                                  value=os.getenv("GEMINI_API_KEY", ""))
-            k_anthropic = gr.Textbox(label="Anthropic key", type="password",
-                                     value=os.getenv("ANTHROPIC_API_KEY", ""))
-        with gr.Row():
-            stt_mode = gr.Dropdown(["translate", "transcribe", "codemix", "translit", "verbatim"],
-                                   value="translate", label="Sarvam mode",
-                                   info="translate gives English. codemix keeps Hinglish as spoken.")
-            language_code = gr.Textbox(value="unknown", label="Language code",
-                                       info="'unknown' lets Sarvam detect it")
-            temperature = gr.Slider(0, 2, value=0, step=0.1, label="Temperature",
-                                    info="0 for strict extraction. Anthropic caps at 1.")
-        with gr.Row():
-            use_batch = gr.Checkbox(True, label="Batch API",
-                                    info="On: up to 2 hours + diarization. Off: under 30 seconds only.")
-            diarize = gr.Checkbox(True, label="Speaker diarization")
-            num_speakers = gr.Number(2, label="Speakers", precision=0)
-            force_json = gr.Checkbox(True, label="Force JSON (Gemini)")
-            clean_output = gr.Checkbox(True, label="Show pipeline-cleaned output")
-
-        with gr.Accordion("Pricing (₹ per 1M tokens) — estimates, edit to match your rates", open=False):
-            price_boxes = []
-            for name in MODEL_NAMES:
-                _, _, d_in, d_out = MODELS[name]
-                with gr.Row():
-                    price_boxes.append(gr.Number(d_in, label=f"{name} — in"))
-                    price_boxes.append(gr.Number(d_out, label=f"{name} — out"))
-
-    with gr.Tab("1 · Transcribe"):
-        with gr.Row():
-            with gr.Column():
-                audio_files = gr.File(label="Call recordings", file_count="multiple",
-                                      file_types=[".mp3", ".wav", ".m4a", ".aac", ".ogg",
-                                                  ".opus", ".flac", ".amr", ".webm"])
-                btn_stt = gr.Button("Transcribe with Sarvam", variant="primary")
-                with gr.Accordion("Or paste a transcript instead", open=False):
-                    pasted = gr.Textbox(label="Transcript", lines=6)
-                    pasted_lang = gr.Textbox(label="STT language code", placeholder="en-IN")
-                    btn_paste = gr.Button("Use this transcript")
-            with gr.Column():
-                stt_status = gr.Markdown("Upload recordings, then press Transcribe.")
-                stt_lang_out = gr.Textbox(label="Detected language code", interactive=False)
-        transcript_box = gr.Textbox(label="Transcript (editable — edit to retest without re-transcribing)",
-                                    lines=12)
-        with gr.Accordion("Diarized turns", open=False):
-            diar_table = gr.Dataframe(label="Who said what", wrap=True)
-        with gr.Accordion("Raw Sarvam response", open=False):
-            raw_json = gr.JSON(label="Everything Sarvam returned")
-
-    with gr.Tab("2 · Prompt and run"):
-        with gr.Row():
-            prompt_box = gr.Textbox(label="Extraction prompt", lines=16,
-                                    placeholder="Paste your derma_v6 prompt here.")
-            with gr.Column(scale=0):
-                version_box = gr.Textbox(value="derma_v6", label="Version label")
-                prompt_file = gr.File(label="Load a saved prompt", file_types=[".txt", ".md"])
-        model_picker = gr.CheckboxGroup(MODEL_NAMES, label="Models",
-                                        value=["Gemini 2.5 Flash-Lite", "Claude Haiku 4.5"])
-        btn_run = gr.Button("Run selected models", variant="primary")
-        run_status = gr.Markdown()
-
-    with gr.Tab("3 · Compare"):
-        summary_table = gr.Dataframe(label="Summary", wrap=True)
-        panel_md, panel_json = [], []
-        with gr.Row():
-            for i in range(MAX_PANELS):
-                with gr.Column():
-                    panel_md.append(gr.Markdown(visible=False))
-                    panel_json.append(gr.JSON())
-        gr.Markdown("### Fields where the models disagree")
-        diff_table = gr.Dataframe(wrap=True)
-        download_out = gr.File(label="Download this comparison")
-
-    with gr.Tab("Run history"):
-        btn_hist = gr.Button("Refresh")
-        hist_table = gr.Dataframe(wrap=True)
-        hist_file = gr.File(label="Download history")
-        gr.Markdown("Hugging Face wipes this file when the Space sleeps. "
-                    "Download it at the end of a testing session.")
-
-    # wiring
-    btn_stt.click(
-        do_transcribe,
-        [audio_files, k_sarvam, stt_mode, language_code, use_batch, diarize, num_speakers],
-        [stt_status, transcript_box, stt_lang_out, diar_table, stt_payloads],
-    ).then(lambda p: p, stt_payloads, raw_json)
-
-    btn_paste.click(load_pasted, [pasted, pasted_lang],
-                    [stt_status, transcript_box, stt_lang_out])
-
-    prompt_file.upload(
-        lambda f: open(f.name if not isinstance(f, str) else f, encoding="utf-8").read(),
-        prompt_file, prompt_box)
-
-    panel_outputs = []
-    for i in range(MAX_PANELS):
-        panel_outputs += [panel_md[i], panel_json[i]]
-
-    btn_run.click(
-        do_run,
-        [transcript_box, stt_lang_out, prompt_box, version_box, model_picker, temperature,
-         force_json, clean_output, k_gemini, k_anthropic] + price_boxes,
-        [run_status] + panel_outputs + [summary_table, diff_table, download_out],
+    st.download_button(
+        "Download this comparison",
+        json.dumps({
+            "prompt_version": prompt_version, "temperature": temperature,
+            "stt_language": st.session_state.stt_language,
+            "transcript": st.session_state.transcript,
+            "results": {k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
+                        for k, v in st.session_state.results.items()},
+        }, ensure_ascii=False, indent=2),
+        file_name=f"bench_{prompt_version}_{time.strftime('%Y%m%d_%H%M')}.json",
     )
 
-    btn_hist.click(load_history, None, [hist_table, hist_file])
+# ----------------------------------------------------------------------------
+# History
+# ----------------------------------------------------------------------------
 
-demo.launch()
+if os.path.exists(RUNS_FILE):
+    with st.expander("Run history"):
+        with open(RUNS_FILE, encoding="utf-8") as fh:
+            history = [json.loads(line) for line in fh if line.strip()]
+        st.dataframe(
+            pd.DataFrame([{k: v for k, v in h.items() if k != "output"} for h in history]),
+            use_container_width=True, hide_index=True,
+        )
+        st.download_button("Download history", open(RUNS_FILE, encoding="utf-8").read(),
+                           file_name="desklens_runs.jsonl")
