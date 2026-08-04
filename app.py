@@ -548,53 +548,92 @@ if run_now:
 if st.session_state.results:
     st.subheader("5 · Compare")
 
-    summary = pd.DataFrame([
-        {
-            "Model": k, "JSON parsed": "yes" if v["parsed"] else "no",
-            "Seconds": round(v["seconds"], 2), "Tokens in": v["tokens_in"],
-            "Tokens out": v["tokens_out"], "₹ per call": round(v["cost"], 4),
-            "₹ per 1000 calls": round(v["cost"] * 1000, 2),
-        }
-        for k, v in st.session_state.results.items()
-    ])
-    st.dataframe(summary, use_container_width=True, hide_index=True)
-
     labels = list(st.session_state.results.keys())
+    ok = {k: v for k, v in st.session_state.results.items() if v["parsed"]}
+    failed = {k: v for k, v in st.session_state.results.items() if not v["parsed"]}
+
+    # ---- summary strip: one metric card per model ----
     cols = st.columns(len(labels))
     for col, label in zip(cols, labels):
         r = st.session_state.results[label]
         with col:
             st.markdown(f"**{label}**")
             if r["error"]:
+                st.metric("Status", "failed")
+            else:
+                st.metric("₹ / 1000 calls", f"{r['cost']*1000:,.1f}")
+            st.caption(f"{r['seconds']:.1f}s · {r['tokens_in']}→{r['tokens_out']} tok")
+
+    if failed:
+        with st.expander(f"{len(failed)} model(s) failed to parse — raw output", expanded=False):
+            for label, r in failed.items():
+                st.markdown(f"**{label}**")
                 st.error(r["error"])
                 st.code(r["raw_text"][:1500])
-            else:
-                show = r["cleaned"] if (clean_output and r["cleaned"]) else r["parsed"]
-                st.json(show, expanded=True)
-                if clean_output and r["changes"]:
-                    st.caption("Pipeline changed: " + "; ".join(r["changes"]))
 
-    parsed_ok = {k: v for k, v in st.session_state.results.items() if v["parsed"]}
-    if len(parsed_ok) >= 2:
-        st.markdown("**Field-by-field**")
+    # ---- the main event: one row per field, one column per model ----
+    if len(ok) >= 2:
         flats = {k: flatten(v["cleaned"] if (clean_output and v["cleaned"]) else v["parsed"])
-                 for k, v in parsed_ok.items()}
+                 for k, v in ok.items()}
         fields = sorted({f for d in flats.values() for f in d})
+        ok_labels = list(ok.keys())
 
         rows = []
         for f in fields:
             vals = {k: d.get(f, "—") for k, d in flats.items()}
             agree = len({json.dumps(v, ensure_ascii=False, sort_keys=True) for v in vals.values()}) == 1
-            rows.append({"Field": f, "Agree": "" if agree else "differs", **vals})
+            row = {"Field": f}
+            for k in ok_labels:
+                v = vals[k]
+                row[k] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+            row["_agree"] = agree
+            rows.append(row)
 
-        diff_only = st.checkbox("Show differences only", value=True)
         table = pd.DataFrame(rows)
-        if diff_only:
-            table = table[table["Agree"] == "differs"]
-        if table.empty:
+        n_diff = int((~table["_agree"]).sum())
+
+        top = st.columns([2, 1, 1])
+        top[0].markdown(f"**Field-by-field** — {n_diff} of {len(fields)} field(s) differ")
+        diff_only = top[1].toggle("Differences only", value=n_diff > 0)
+        wrap_long = top[2].toggle("Wrap text", value=False)
+
+        view = table[~table["_agree"]] if diff_only else table
+        view = view.drop(columns="_agree")
+
+        if view.empty:
             st.success("Every field matches across models.")
         else:
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            def highlight_diff(row):
+                is_diff = not table.loc[row.name, "_agree"] if row.name in table.index else False
+                return ["background-color: #3a2a1a" if is_diff and c != "Field" else ""
+                        for c in row.index]
+
+            styled = view.style.apply(highlight_diff, axis=1)
+            st.dataframe(
+                styled, use_container_width=True, hide_index=True,
+                column_config={
+                    c: st.column_config.TextColumn(c, width="large" if wrap_long else "medium")
+                    for c in view.columns
+                },
+            )
+
+        with st.expander("Full JSON per model", expanded=False):
+            jcols = st.columns(len(ok_labels))
+            for col, label in zip(jcols, ok_labels):
+                r = ok[label]
+                with col:
+                    st.markdown(f"**{label}**")
+                    show = r["cleaned"] if (clean_output and r["cleaned"]) else r["parsed"]
+                    st.json(show, expanded=False)
+                    if clean_output and r["changes"]:
+                        st.caption("Pipeline changed: " + "; ".join(r["changes"]))
+
+    elif len(ok) == 1:
+        only_label = list(ok.keys())[0]
+        r = ok[only_label]
+        st.markdown(f"**{only_label}** — only one model parsed, nothing to compare against")
+        show = r["cleaned"] if (clean_output and r["cleaned"]) else r["parsed"]
+        st.json(show, expanded=True)
 
     st.download_button(
         "Download this comparison",
