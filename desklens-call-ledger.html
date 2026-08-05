@@ -398,7 +398,7 @@ function normalizeHistoryLines(lines, sourceFile){
       stt_language: obj.stt_language || null, transcript: null,
       timestamp: obj.ts || null, primary: model, models: [model],
     });
-  }
+    }
   return calls;
 }
 function parseUpload(text, filename){
@@ -429,7 +429,18 @@ let allCalls = [];
 let activeFilter = "all";
 let openIds = new Set();
 let selectedIds = new Set();
-let verdicts = [];
+const VERDICT_STORE = "desklens_verdicts_v1";
+function loadVerdicts(){
+  try{
+    const raw = localStorage.getItem(VERDICT_STORE);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function saveVerdicts(){
+  try{ localStorage.setItem(VERDICT_STORE, JSON.stringify(verdicts)); }
+  catch(e){ /* storage full or blocked — verdicts still work for this session */ }
+}
+let verdicts = loadVerdicts();
 let insightsOpen = false;
 
 const fileInput = document.getElementById("fileInput");
@@ -447,7 +458,13 @@ fileInput.addEventListener("change", async (e) => {
     }
     if(result.kind === "session"){
       allCalls = result.session.calls || [];
-      verdicts = result.session.verdicts || [];
+      const incoming = result.session.verdicts || [];
+      const seen = new Set(verdicts.map(v => v.ts + "::" + (v.winner.sig||v.winner.callId) + "::" + v.winner.label));
+      incoming.forEach(v => {
+        const k = v.ts + "::" + (v.winner.sig||v.winner.callId) + "::" + v.winner.label;
+        if(!seen.has(k)){ verdicts.push(v); seen.add(k); }
+      });
+      saveVerdicts();
       selectedIds = new Set(); compareView = null;
       continue;
     }
@@ -844,7 +861,7 @@ function renderLedger(){
         btn.addEventListener("click", () => {
           if(btn.classList.contains("ins-clear")){
             if(confirm("Delete all " + verdicts.length + " verdicts? This cannot be undone (unless you saved a session).")){
-              verdicts = []; insightsOpen = false; render();
+              verdicts = []; saveVerdicts(); insightsOpen = false; render();
             }
             return;
           }
@@ -961,7 +978,7 @@ function renderLedger(){
     btn.addEventListener("click", () => {
       if(btn.classList.contains("ins-clear")){
         if(confirm("Delete all " + verdicts.length + " verdicts? This cannot be undone (unless you saved a session).")){
-          verdicts = []; insightsOpen = false; render();
+          verdicts = []; saveVerdicts(); insightsOpen = false; render();
         }
         return;
       }
@@ -1042,6 +1059,7 @@ function renderLedger(){
         })),
       });
       compareView.winnerKey = key;
+      saveVerdicts();
       render();
     });
   });
