@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeskLens · Call Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FAF9F5;
+    --paper-raised:#FFFFFF;
+    --ink:#1C1B18;
+    --ink-soft:#6B675E;
+    --rule:#E4DFD3;
+    --teal:#1D5B53;
+    --teal-soft:#E4EFEC;
+    --amber:#B4711F;
+    --amber-soft:#F6EBDB;
+    --red:#A23B2E;
+    --red-soft:#F5E4E0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:40px 24px 80px;}
+
+  header.top{
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom:2px solid var(--ink);
+    padding-bottom:18px; margin-bottom:28px;
+    flex-wrap:wrap; gap:12px;
+  }
+  header.top h1{
+    font-family:'Newsreader',serif; font-weight:600; font-size:28px;
+    margin:0; letter-spacing:-0.01em;
+  }
+  header.top h1 .dot{color:var(--teal);}
+  header.top .tag{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.08em;
+  }
+
+  .upload-row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:32px;}
+  .upload-btn{
+    font-family:'Inter',sans-serif; font-weight:600; font-size:13px;
+    background:var(--ink); color:var(--paper); border:none;
+    padding:11px 18px; border-radius:3px; cursor:pointer;
+  }
+  .upload-btn:hover{background:#000;}
+  .upload-hint{font-size:12.5px; color:var(--ink-soft);}
+  input[type=file]{display:none;}
+  .clear-btn{
+    font-family:'Inter',sans-serif; font-size:12.5px; color:var(--ink-soft);
+    background:none; border:1px solid var(--rule); border-radius:3px;
+    padding:10px 14px; cursor:pointer;
+  }
+  .clear-btn:hover{border-color:var(--ink-soft); color:var(--ink);}
+
+  /* stat strip */
+  .stats{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:1px;
+    background:var(--rule); border:1px solid var(--rule);
+    margin-bottom:32px; border-radius:4px; overflow:hidden;
+  }
+  .stat{background:var(--paper-raised); padding:16px 18px;}
+  .stat .num{
+    font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:500;
+    color:var(--ink); line-height:1;
+  }
+  .stat .num.flag{color:var(--amber);}
+  .stat .lbl{
+    font-size:11.5px; color:var(--ink-soft); margin-top:6px;
+    text-transform:uppercase; letter-spacing:.06em;
+  }
+
+  /* filter chips */
+  .filters{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;}
+  .chip{
+    font-family:'Inter',sans-serif; font-size:12.5px; font-weight:500;
+    padding:7px 13px; border-radius:20px; border:1px solid var(--rule);
+    background:var(--paper-raised); cursor:pointer; color:var(--ink-soft);
+    transition:.12s;
+  }
+  .chip:hover{border-color:var(--ink-soft);}
+  .chip.active{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+
+  /* empty state */
+  .empty{
+    border:1.5px dashed var(--rule); border-radius:6px;
+    padding:56px 24px; text-align:center; color:var(--ink-soft);
+  }
+  .empty .big{font-family:'Newsreader',serif; font-size:20px; color:var(--ink); margin-bottom:8px;}
+  .empty .small{font-size:13.5px; max-width:420px; margin:0 auto;}
+
+  /* ledger */
+  .ledger{display:flex; flex-direction:column; gap:10px;}
+  .entry{
+    background:var(--paper-raised); border:1px solid var(--rule); border-radius:4px;
+    border-left:4px solid var(--rule); overflow:hidden;
+    transition:border-color .12s;
+  }
+  .entry.urgency-emergency{border-left-color:var(--red);}
+  .entry.urgency-urgent{border-left-color:var(--amber);}
+  .entry.urgency-routine{border-left-color:var(--teal);}
+
+  .entry-head{
+    display:flex; align-items:center; gap:14px; padding:14px 18px;
+    cursor:pointer;
+  }
+  .entry-head:hover{background:#FBFAF7;}
+  .case-id{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);
+    min-width:78px;
+  }
+  .entry-main{flex:1; min-width:0;}
+  .entry-title{
+    font-family:'Newsreader',serif; font-size:16.5px; font-weight:500;
+    color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .entry-sub{
+    font-size:12.5px; color:var(--ink-soft); margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .entry-meta{
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-soft);
+    margin-top:3px; opacity:.8;
+  }
+  .badges{display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end;}
+  .badge{
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:500;
+    padding:3px 8px; border-radius:3px; text-transform:uppercase; letter-spacing:.03em;
+    white-space:nowrap;
+  }
+  .badge.preferred{background:var(--teal); color:#fff;}
+  .badge.routine{background:var(--teal-soft); color:var(--teal);}
+  .badge.urgent{background:var(--amber-soft); color:var(--amber);}
+  .badge.emergency{background:var(--red-soft); color:var(--red);}
+  .badge.flag{background:var(--red-soft); color:var(--red);}
+  .badge.outcome{background:#F0EFEA; color:var(--ink-soft);}
+  .chev{
+    font-size:14px; color:var(--ink-soft); transition:transform .15s; flex-shrink:0;
+  }
+  .entry.open .chev{transform:rotate(90deg);}
+
+  .entry-body{
+    display:none; padding:0 18px 20px 18px; border-top:1px solid var(--rule);
+  }
+  .entry.open .entry-body{display:block;}
+  .body-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:18px 28px; margin-top:16px;
+  }
+  .field{margin-bottom:4px;}
+  .field-lbl{
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--ink-soft); margin-bottom:4px;
+  }
+  .field-val{font-size:13.5px; color:var(--ink); line-height:1.5;}
+  .field-val.empty-val{color:var(--ink-soft); font-style:italic;}
+  .pill-list{display:flex; flex-wrap:wrap; gap:5px;}
+  .pill{
+    font-size:12px; background:#F0EFEA; padding:3px 9px; border-radius:12px; color:var(--ink);
+  }
+  .summary-block{
+    grid-column:1 / -1; background:var(--paper); border:1px solid var(--rule);
+    border-radius:4px; padding:12px 14px; font-size:13.5px; line-height:1.6;
+  }
+  .model-compare{
+    grid-column:1 / -1; margin-top:6px; border-top:1px solid var(--rule); padding-top:14px;
+  }
+  .model-row{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:12.5px; padding:6px 0; border-bottom:1px solid #F0EFEA;
+  }
+  .model-row:last-child{border-bottom:none;}
+  .model-name{font-weight:500;}
+  .model-meta{font-family:'IBM Plex Mono',monospace; color:var(--ink-soft); font-size:11.5px;}
+  .model-err{color:var(--red);}
+
+  .sel-box{
+    appearance:none; width:16px; height:16px; border:1.5px solid var(--rule);
+    border-radius:3px; cursor:pointer; flex-shrink:0; background:var(--paper-raised);
+    position:relative; margin:0;
+  }
+  .sel-box:hover{border-color:var(--ink-soft);}
+  .sel-box:checked{background:var(--teal); border-color:var(--teal);}
+  .sel-box:checked::after{
+    content:"✓"; color:#fff; font-size:11px; position:absolute;
+    top:50%; left:50%; transform:translate(-50%,-52%);
+  }
+  .compare-bar{
+    position:sticky; top:0; z-index:10;
+    background:var(--ink); color:var(--paper);
+    border-radius:4px; padding:10px 16px; margin-bottom:14px;
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+  }
+  .compare-bar .cb-msg{font-size:13px;}
+  .compare-bar .cb-actions{display:flex; gap:8px;}
+  .compare-bar button{
+    font-family:'Inter',sans-serif; font-size:12.5px; font-weight:600;
+    border-radius:3px; padding:7px 14px; cursor:pointer; border:none;
+  }
+  .compare-bar .cb-go{background:var(--paper); color:var(--ink);}
+  .compare-bar .cb-go:disabled{opacity:.4; cursor:default;}
+  .compare-bar .cb-cancel{background:transparent; color:var(--paper); border:1px solid rgba(255,255,255,.35);}
+  .compare-view{
+    background:var(--paper-raised); border:1px solid var(--rule); border-radius:4px;
+    padding:18px; margin-bottom:18px;
+  }
+  .compare-view h2{
+    font-family:'Newsreader',serif; font-weight:600; font-size:19px; margin:0 0 4px;
+  }
+  .compare-view .cv-sub{font-size:12px; color:var(--ink-soft); margin-bottom:14px;}
+  .cv-close{
+    float:right; background:none; border:1px solid var(--rule); border-radius:3px;
+    font-size:12px; padding:5px 10px; cursor:pointer; color:var(--ink-soft);
+  }
+  .cv-close:hover{color:var(--ink); border-color:var(--ink-soft);}
+  .pick-btn{
+    font-family:'Inter',sans-serif; font-size:10.5px; font-weight:600;
+    margin-top:5px; padding:4px 10px; border-radius:3px; cursor:pointer;
+    border:1px solid var(--rule); background:var(--paper-raised); color:var(--ink-soft);
+    text-transform:none; letter-spacing:0;
+  }
+  .pick-btn:hover{border-color:var(--teal); color:var(--teal);}
+  .pick-btn.picked{background:var(--teal); border-color:var(--teal); color:#fff;}
+  .win-star{color:var(--amber);}
+  .cmp-table th.wincol, .cmp-table td.wincol{background:var(--teal-soft);}
+  .cmp-table tr.diff td.wincol{background:#D8E9E4;}
+  .chip.insights{border-color:var(--teal); color:var(--teal);}
+  .chip.insights.active{background:var(--teal); color:#fff;}
+  .pref-list{display:flex; flex-direction:column; gap:8px;}
+  .pref-item{border:1px solid var(--rule); border-radius:4px; overflow:hidden; background:var(--paper);}
+  .pref-head{display:flex; justify-content:space-between; align-items:center; padding:10px 13px; cursor:pointer; gap:12px;}
+  .pref-head:hover{background:#FBFAF7;}
+  .pref-title{font-family:'Newsreader',serif; font-size:15px; font-weight:500;}
+  .pref-meta{font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-soft); margin-left:6px;}
+  .pref-sub{font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-soft); margin-top:3px;}
+  .pref-toggle{font-size:11.5px; color:var(--ink-soft); white-space:nowrap;}
+  .pref-body{display:none; padding:0 13px 13px;}
+  .pref-item.open .pref-body{display:block;}
+  .pref-item.open .pref-toggle{color:var(--teal);}
+  .pref-summary{font-size:13px; line-height:1.5; margin-bottom:10px; padding-top:4px;}
+  .pref-json{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.5;
+    background:var(--paper-raised); border:1px solid var(--rule); border-radius:3px;
+    padding:10px; overflow-x:auto; margin:0; max-height:340px; white-space:pre-wrap;
+    overflow-wrap:break-word;
+  }
+  .pref-transcript{max-height:180px; color:var(--ink-soft);}
+  .cmp-head{display:flex; justify-content:space-between; align-items:center; margin:14px 0 8px;}
+  .cmp-toggle{font-size:11.5px; color:var(--ink-soft); display:flex; align-items:center; gap:5px; cursor:pointer;}
+  .cmp-scroll{overflow-x:auto; border:1px solid var(--rule); border-radius:4px;}
+  .cmp-table{border-collapse:collapse; width:100%; font-size:12px;}
+  .cmp-table th{
+    text-align:left; font-weight:600; font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.05em; color:var(--ink-soft); background:var(--paper);
+    padding:8px 10px; border-bottom:1px solid var(--rule); white-space:nowrap;
+  }
+  .cmp-table td{
+    padding:7px 10px; border-bottom:1px solid #F0EFEA; vertical-align:top;
+    max-width:260px; overflow-wrap:break-word;
+  }
+  .cmp-table tr:last-child td{border-bottom:none;}
+  .cmp-table td.fkey{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft); white-space:nowrap;}
+  .cmp-table tr.diff td{background:var(--amber-soft);}
+  .cmp-table tr.diff td.fkey{color:var(--amber); font-weight:500;}
+
+  footer{
+    margin-top:40px; padding-top:16px; border-top:1px solid var(--rule);
+    font-size:11.5px; color:var(--ink-soft); text-align:center;
+  }
+
+  @media (max-width:640px){
+    .stats{grid-template-columns:1fr 1fr;}
+    .body-grid{grid-template-columns:1fr;}
+    .entry-sub{white-space:normal;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>DeskLens<span class="dot">·</span>Call Ledger</h1>
+    <div class="tag" id="sourceTag">no data loaded</div>
+  </header>
+
+  <div class="upload-row">
+    <label class="upload-btn" for="fileInput">Load bench export</label>
+    <input type="file" id="fileInput" accept=".json,.jsonl" multiple>
+    <span class="upload-hint">Accepts a "Download this comparison" .json or "Download history" .jsonl — from the DeskLens Bench app. Load several to build up the ledger.</span>
+    <button class="clear-btn" id="saveBtn" style="display:none;">Save session</button>
+    <button class="clear-btn" id="clearBtn" style="display:none;">Clear all</button>
+  </div>
+
+  <div id="statsRow"></div>
+  <div id="filtersRow"></div>
+  <div id="content">
+    <div class="empty">
+      <div class="big">Nothing loaded yet</div>
+      <div class="small">Drop in a bench export to see calls here — flagged calls, outcomes, and full extraction detail, laid out the way a doctor would scan a chart.</div>
+    </div>
+  </div>
+
+  <footer>Runs entirely in this browser tab. Nothing is uploaded anywhere — closing the tab clears it.</footer>
+</div>
+
+<script>
+// ---------- parser (mirrors parser.js, tested separately against real exports) ----------
+function hashStr(s){
+  let h = 5381;
+  for(let i=0;i<s.length;i++){ h = ((h<<5) + h + s.charCodeAt(i)) | 0; }
+  return (h>>>0).toString(36);
+}
+function callSignature(parts){
+  return hashStr(parts.filter(x => x !== null && x !== undefined).join("|"));
+}
+
+function fieldsFrom(parsed){
+  if(!parsed || typeof parsed !== "object") return {};
+  return {
+    call_category: parsed.call_category ?? null,
+    confidence: parsed.confidence ?? null,
+    call_type: parsed.call_type ?? null,
+    urgency: parsed.urgency ?? null,
+    patient_name: parsed.patient_name ?? null,
+    patient_age: parsed.patient_age ?? null,
+    symptoms_mentioned: parsed.symptoms_mentioned ?? [],
+    procedures_mentioned: parsed.procedures_mentioned ?? [],
+    medications_mentioned: parsed.medications_mentioned ?? [],
+    appointment: parsed.appointment ?? null,
+    flags: parsed.flags ?? [],
+    action_items: parsed.action_items ?? [],
+    outcome: parsed.outcome ?? null,
+    one_line_summary: parsed.one_line_summary ?? null,
+    detailed_summary: parsed.detailed_summary ?? null,
+    language: parsed.language ?? null,
+  };
+}
+function normalizeComparisonExport(obj, sourceFile){
+  const calls = [];
+  const results = obj.results || {};
+  const modelEntries = Object.entries(results);
+  if(modelEntries.length === 0) return calls;
+  const models = modelEntries.map(([label, r]) => ({
+    label, model_id: r.model_id || null,
+    fields: fieldsFrom(r.cleaned || r.parsed),
+    error: r.error || null,
+    seconds: r.seconds ?? null, tokens_in: r.tokens_in ?? null,
+    tokens_out: r.tokens_out ?? null, cost: r.cost ?? null,
+  }));
+  const primary = models.find(m => !m.error) || models[0];
+  const sig = callSignature([
+    (obj.transcript || "").slice(0, 400),
+    obj.prompt_version,
+    obj.temperature,
+    Object.keys(results).sort().join(","),
+  ]);
+  calls.push({
+    id: sourceFile + "::" + sig,
+    sig,
+    source: sourceFile, prompt_version: obj.prompt_version || null,
+    temperature: (obj.temperature !== undefined ? obj.temperature : null),
+    stt_language: obj.stt_language || null, transcript: obj.transcript || null,
+    timestamp: null, primary, models,
+  });
+  return calls;
+}
+function normalizeHistoryLines(lines, sourceFile){
+  const calls = [];
+  for(const line of lines){
+    if(!line.trim()) continue;
+    let obj;
+    try{ obj = JSON.parse(line); } catch(e){ continue; }
+    const fields = fieldsFrom(obj.output);
+    const model = {
+      label: obj.model || "unknown model", model_id: null, fields,
+      error: obj.output ? null : "no parsed output",
+      seconds: obj.seconds ?? null, tokens_in: obj.tokens_in ?? null,
+      tokens_out: obj.tokens_out ?? null, cost: null,
+    };
+    const sig = callSignature([
+      obj.ts, obj.prompt_version, obj.temperature, obj.model,
+      (fields.one_line_summary || "").slice(0, 200),
+    ]);
+    calls.push({
+      id: sourceFile + "::" + sig,
+      sig,
+      source: sourceFile, prompt_version: obj.prompt_version || null,
+      temperature: (obj.temperature !== undefined ? obj.temperature : null),
+      stt_language: obj.stt_language || null, transcript: null,
+      timestamp: obj.ts || null, primary: model, models: [model],
+    });
+  }
+  return calls;
+}
+function parseUpload(text, filename){
+  const trimmed = text.trim();
+  if(filename.endsWith(".jsonl")){
+    return { kind:"history", calls: normalizeHistoryLines(trimmed.split("\n"), filename) };
+  }
+  let obj;
+  try{ obj = JSON.parse(trimmed); }
+  catch(e){ return { kind:"error", error:"Could not read "+filename+" as JSON: "+e.message }; }
+  if(obj.desklens_session){
+    return { kind:"session", session: obj };
+  }
+  if(Array.isArray(obj)){
+    let calls = [];
+    obj.forEach((o,i) => { calls = calls.concat(normalizeComparisonExport(o, filename+"["+i+"]")); });
+    return { kind:"comparison-array", calls };
+  }
+  if(obj.results){ return { kind:"comparison", calls: normalizeComparisonExport(obj, filename) }; }
+  if(obj.output !== undefined || obj.ts !== undefined){
+    return { kind:"history", calls: normalizeHistoryLines([trimmed], filename) };
+  }
+  return { kind:"error", error:"Unrecognized shape in "+filename };
+}
+
+// ---------- state ----------
+let allCalls = [];
+let activeFilter = "all";
+let openIds = new Set();
+let selectedIds = new Set();
+let verdicts = [];
+let insightsOpen = false;
+
+const fileInput = document.getElementById("fileInput");
+const clearBtn = document.getElementById("clearBtn");
+const sourceTag = document.getElementById("sourceTag");
+
+fileInput.addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  for(const f of files){
+    const text = await f.text();
+    const result = parseUpload(text, f.name);
+    if(result.kind === "error"){
+      alert(result.error);
+      continue;
+    }
+    if(result.kind === "session"){
+      allCalls = result.session.calls || [];
+      verdicts = result.session.verdicts || [];
+      selectedIds = new Set(); compareView = null;
+      continue;
+    }
+    allCalls = allCalls.concat(result.calls);
+  }
+  fileInput.value = "";
+  render();
+});
+
+clearBtn.addEventListener("click", () => {
+  allCalls = [];
+  openIds = new Set();
+  selectedIds = new Set();
+  compareView = null;
+  render();
+});
+
+const saveBtn = document.getElementById("saveBtn");
+function buildSessionJSON(){
+  return JSON.stringify({
+    desklens_session: 1,
+    savedAt: new Date().toISOString(),
+    calls: allCalls,
+    verdicts: verdicts,
+  });
+}
+saveBtn.addEventListener("click", () => {
+  const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
+  const blob = new Blob([buildSessionJSON()], {type:"application/json"});
+  const a = document.createElement("a");
+  if(URL.createObjectURL){
+    a.href = URL.createObjectURL(blob);
+    a.download = "desklens_session_" + stamp + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+});
+
+function urgencyOf(call){ return (call.primary.fields.urgency || "routine").toLowerCase(); }
+function isFlagged(call){ return (call.primary.fields.flags || []).length > 0; }
+function isPatientCall(call){ return call.primary.fields.call_category === "patient_call"; }
+
+let compareView = null; // holds the ids being compared, or null
+
+function render(){
+  clearBtn.style.display = allCalls.length ? "inline-block" : "none";
+  saveBtn.style.display = (allCalls.length || verdicts.length) ? "inline-block" : "none";
+  const sources = new Set(allCalls.map(c => c.source));
+  const vTxt = verdicts.length ? verdicts.length + " verdict" + (verdicts.length===1?"":"s") + " kept" : "";
+  sourceTag.textContent = allCalls.length
+    ? allCalls.length + " call" + (allCalls.length===1?"":"s") + " · " + sources.size + " file" + (sources.size===1?"":"s") + " loaded" + (vTxt ? " · " + vTxt : "")
+    : (vTxt || "no data loaded");
+
+  renderStats();
+  renderFilters();
+  renderLedger();
+}
+
+function renderStats(){
+  const el = document.getElementById("statsRow");
+  if(allCalls.length === 0){ el.innerHTML = ""; return; }
+  const total = allCalls.length;
+  const flagged = allCalls.filter(isFlagged).length;
+  const pending = allCalls.filter(c => c.primary.fields.outcome === "pending_action" || c.primary.fields.outcome === "needs_callback").length;
+  const costs = allCalls.map(c => c.primary.cost).filter(c => typeof c === "number");
+  const avgCost1000 = costs.length ? (costs.reduce((a,b)=>a+b,0)/costs.length*1000) : null;
+
+  el.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="num">${total}</div><div class="lbl">Calls loaded</div></div>
+      <div class="stat"><div class="num ${flagged>0?'flag':''}">${flagged}</div><div class="lbl">Flagged</div></div>
+      <div class="stat"><div class="num">${pending}</div><div class="lbl">Pending action</div></div>
+      <div class="stat"><div class="num">${avgCost1000!==null ? '₹'+avgCost1000.toFixed(1) : '—'}</div><div class="lbl">Avg / 1000 calls</div></div>
+    </div>`;
+}
+
+function renderFilters(){
+  const el = document.getElementById("filtersRow");
+  if(allCalls.length === 0 && verdicts.length === 0){ el.innerHTML = ""; return; }
+  if(allCalls.length === 0){
+    el.innerHTML = `<div class="filters"><button class="chip insights ${insightsOpen?'active':''}" data-key="__insights">Insights · ${verdicts.length} verdict${verdicts.length>1?'s':''}</button></div>`;
+    el.querySelector(".chip").addEventListener("click", () => { insightsOpen = !insightsOpen; render(); });
+    return;
+  }
+  const chips = [
+    ["all","All"],
+    ["flagged","Flagged only"],
+    ["patient","Patient calls"],
+    ["nonpatient","Non-patient"],
+    ["pending","Pending action"],
+  ];
+  let chipHtml = chips.map(([key,label]) =>
+    `<button class="chip ${activeFilter===key?'active':''}" data-key="${key}">${label}</button>`
+  ).join("");
+  if(verdicts.length > 0){
+    chipHtml += `<button class="chip insights ${insightsOpen?'active':''}" data-key="__insights">Insights · ${verdicts.length} verdict${verdicts.length>1?'s':''}</button>`;
+  }
+  el.innerHTML = `<div class="filters">` + chipHtml + `</div>`;
+  el.querySelectorAll(".chip").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if(btn.dataset.key === "__insights"){ insightsOpen = !insightsOpen; }
+      else { activeFilter = btn.dataset.key; }
+      render();
+    });
+  });
+}
+
+function applyFilter(calls){
+  switch(activeFilter){
+    case "flagged": return calls.filter(isFlagged);
+    case "patient": return calls.filter(isPatientCall);
+    case "nonpatient": return calls.filter(c => !isPatientCall(c));
+    case "pending": return calls.filter(c => ["pending_action","needs_callback"].includes(c.primary.fields.outcome));
+    default: return calls;
+  }
+}
+
+function esc(s){
+  if(s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function fieldOrEmpty(val, emptyLabel){
+  if(val === null || val === undefined || val === "" ) return `<span class="field-val empty-val">${emptyLabel||"not mentioned"}</span>`;
+  return `<span class="field-val">${esc(val)}</span>`;
+}
+function pillList(arr, emptyLabel){
+  if(!arr || arr.length === 0) return `<span class="field-val empty-val">${emptyLabel||"none"}</span>`;
+  return `<div class="pill-list">` + arr.map(x => `<span class="pill">${esc(x)}</span>`).join("") + `</div>`;
+}
+
+function flattenFields(obj, prefix){
+  prefix = prefix || "";
+  const out = {};
+  if(obj === null || obj === undefined) return out;
+  if(obj.desklens_session){
+    return { kind:"session", session: obj };
+  }
+  if(Array.isArray(obj)){
+    out[prefix] = JSON.stringify(obj);
+    return out;
+  }
+  if(typeof obj === "object"){
+    for(const [k,v] of Object.entries(obj)){
+      const key = prefix ? prefix + "." + k : k;
+      if(v !== null && typeof v === "object" && !Array.isArray(v)){
+        Object.assign(out, flattenFields(v, key));
+      } else if(Array.isArray(v)){
+        out[key] = JSON.stringify(v);
+      } else {
+        out[key] = v;
+      }
+    }
+    return out;
+  }
+  out[prefix] = obj;
+  return out;
+}
+
+function buildModelCompare(call){
+  const okModels = call.models.filter(m => !m.error);
+  const errModels = call.models.filter(m => m.error);
+
+  // per-model perf strip
+  const prefSetPerf = preferredKeys();
+  const perf = call.models.map(m => `
+      <div class="model-row">
+        <span class="model-name">${esc(m.label)}${prefSetPerf.has(call.sig + "::" + m.label) ? ' <span class="win-star">★</span>' : ''}</span>
+        <span class="model-meta ${m.error ? 'model-err' : ''}">
+          ${m.error ? 'failed to parse' : [
+              m.seconds!==null ? m.seconds.toFixed(1)+'s' : null,
+              m.tokens_in!==null ? m.tokens_in+'→'+m.tokens_out+' tok' : null,
+              m.cost!==null ? '₹'+(m.cost*1000).toFixed(1)+'/1000' : null,
+            ].filter(Boolean).join(' · ')}
+        </span>
+      </div>`).join("");
+
+  let diffTable = "";
+  if(okModels.length >= 2){
+    const flats = okModels.map(m => flattenFields(m.fields));
+    const allKeys = [...new Set(flats.flatMap(f => Object.keys(f)))].sort();
+    const rows = [];
+    for(const key of allKeys){
+      const vals = flats.map(f => (key in f && f[key] !== null && f[key] !== "") ? String(f[key]) : "—");
+      const agree = new Set(vals).size === 1;
+      rows.push({ key, vals, agree });
+    }
+    const diffRows = rows.filter(r => !r.agree);
+    const nDiff = diffRows.length;
+
+    const header = `<tr><th>Field</th>${okModels.map(m => `<th>${esc(m.label)}</th>`).join("")}</tr>`;
+    const bodyRows = (r) => `<tr class="${r.agree ? '' : 'diff'}"><td class="fkey">${esc(r.key)}</td>${r.vals.map(v => `<td>${esc(v)}</td>`).join("")}</tr>`;
+
+    diffTable = `
+      <div class="cmp-head">
+        <span class="field-lbl">Field comparison — ${nDiff === 0 ? 'all fields agree' : nDiff + ' field' + (nDiff>1?'s':'') + ' differ'}</span>
+        ${nDiff > 0 ? `<label class="cmp-toggle"><input type="checkbox" class="diffOnlyBox" checked> differences only</label>` : ''}
+      </div>
+      <div class="cmp-scroll">
+        <table class="cmp-table" data-mode="diff">
+          <thead>${header}</thead>
+          <tbody class="tb-diff">${diffRows.map(bodyRows).join("")}</tbody>
+          <tbody class="tb-all" style="display:none;">${rows.map(bodyRows).join("")}</tbody>
+        </table>
+      </div>`;
+    if(nDiff === 0){
+      diffTable = `
+      <div class="cmp-head"><span class="field-lbl">Field comparison — all fields agree</span></div>
+      <div class="cmp-scroll">
+        <table class="cmp-table">
+          <thead>${header}</thead>
+          <tbody>${rows.map(bodyRows).join("")}</tbody>
+        </table>
+      </div>`;
+    }
+  }
+
+  return `
+      <div class="model-compare">
+        <div class="field-lbl" style="margin-bottom:8px;">Model outputs on this call</div>
+        ${perf}
+        ${diffTable}
+      </div>`;
+}
+
+function buildCompareView(ids, winnerKey){
+  const chosen = allCalls.filter(c => ids.includes(c.id));
+  // one column per call-model pair (skip failed models)
+  const cols = [];
+  chosen.forEach((call, ci) => {
+    const caseNum = "CALL-" + String(allCalls.indexOf(call)+1).padStart(4,"0");
+    call.models.filter(m => !m.error).forEach(m => {
+      const key = call.sig + "::" + m.label;
+      const isWin = winnerKey === key || preferredKeys().has(key);
+      cols.push({
+        key, isWin,
+        callId: call.id, label: m.label,
+        temperature: call.temperature, prompt_version: call.prompt_version,
+        call_type: m.fields.call_type || null,
+        call_category: m.fields.call_category || null,
+        header: `${esc(m.label)}${isWin ? ' <span class="win-star">★</span>' : ''}<br><span style="font-weight:400;text-transform:none;letter-spacing:0;">${esc(caseNum)}${call.temperature!==null&&call.temperature!==undefined ? ' · temp '+call.temperature : ''}${call.prompt_version ? ' · '+esc(call.prompt_version) : ''}</span><br><button class="pick-btn ${isWin?'picked':''}" data-key="${esc(key)}">${isWin ? '✓ Preferred' : 'Pick as best'}</button>`,
+        flat: flattenFields(m.fields),
+      });
+    });
+  });
+  if(cols.length < 2){
+    return `<div class="compare-view"><button class="cv-close">Close</button><h2>Comparison</h2><div class="cv-sub">Not enough successfully parsed outputs to compare.</div></div>`;
+  }
+  const allKeys = [...new Set(cols.flatMap(c => Object.keys(c.flat)))].sort();
+  const rows = allKeys.map(key => {
+    const vals = cols.map(c => (key in c.flat && c.flat[key] !== null && c.flat[key] !== "") ? String(c.flat[key]) : "—");
+    return { key, vals, agree: new Set(vals).size === 1 };
+  });
+  const diffRows = rows.filter(r => !r.agree);
+  const nDiff = diffRows.length;
+  const header = `<tr><th>Field</th>${cols.map(c => `<th class="${c.isWin?'wincol':''}">${c.header}</th>`).join("")}</tr>`;
+  const winIdx = cols.findIndex(c => c.isWin);
+  const bodyRow = (r) => `<tr class="${r.agree?'':'diff'}"><td class="fkey">${esc(r.key)}</td>${r.vals.map((v,i)=>`<td class="${i===winIdx?'wincol':''}">${esc(v)}</td>`).join("")}</tr>`;
+
+  return `
+    <div class="compare-view">
+      <button class="cv-close">Close</button>
+      <h2>Comparison — ${cols.length} outputs</h2>
+      <div class="cv-sub">${nDiff===0 ? 'Every field agrees across all selected outputs.' : nDiff + ' field' + (nDiff>1?'s':'') + ' differ — highlighted below.'}</div>
+      ${nDiff>0 ? `<div class="cmp-head"><span class="field-lbl">Fields</span><label class="cmp-toggle"><input type="checkbox" class="cvDiffOnly" checked> differences only</label></div>` : ''}
+      <div class="cmp-scroll">
+        <table class="cmp-table">
+          <thead>${header}</thead>
+          <tbody class="tb-diff">${diffRows.map(bodyRow).join("")}</tbody>
+          <tbody class="tb-all" style="display:${nDiff>0?'none':''};">${rows.map(bodyRow).join("")}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function preferredKeys(){
+  return new Set(verdicts.map(v => (v.winner.sig || v.winner.callId) + "::" + v.winner.label));
+}
+
+function buildInsights(){
+  // wins matrix: call_type x temperature
+  const matrix = {};
+  const tempsSet = new Set();
+  const modelWins = {};
+  const tOf = (x) => (x === null || x === undefined) ? "?" : String(x);
+  verdicts.forEach(v => {
+    const ct = v.call_type || "unknown";
+    const t = tOf(v.winner.temperature);
+    tempsSet.add(t);
+    (v.others || []).forEach(o => tempsSet.add(tOf(o.temperature)));
+    matrix[ct] = matrix[ct] || {};
+    matrix[ct][t] = (matrix[ct][t] || 0) + 1;
+    (v.others || []).forEach(o => { const ot = tOf(o.temperature); matrix[ct][ot] = matrix[ct][ot] || 0; });
+    modelWins[v.winner.label] = (modelWins[v.winner.label] || 0) + 1;
+  });
+  const temps = [...tempsSet].sort((a,b) => parseFloat(a) - parseFloat(b));
+  const types = Object.keys(matrix).sort();
+
+  const rows = types.map(ct => {
+    const cells = temps.map(t => matrix[ct][t] || 0);
+    const best = Math.max(...cells);
+    const bestTemps = temps.filter((t,i) => cells[i] === best && best > 0);
+    const rec = bestTemps.length === 1 ? bestTemps[0] : (bestTemps.length ? bestTemps.join(" / ") : "—");
+    const total = cells.reduce((a,b)=>a+b,0);
+    return `<tr>
+      <td class="fkey">${esc(ct)}</td>
+      ${cells.map((c,i) => `<td class="${c===best && c>0 ? 'wincol' : ''}">${c || ''}</td>`).join("")}
+      <td><strong>${esc(rec)}</strong> <span style="color:var(--ink-soft);font-size:11px;">(${total} verdict${total>1?'s':''})</span></td>
+    </tr>`;
+  }).join("");
+
+  const modelRows = Object.entries(modelWins).sort((a,b)=>b[1]-a[1]).map(([label,n]) =>
+    `<div class="model-row"><span class="model-name">${esc(label)}</span><span class="model-meta">${n} win${n>1?'s':''}</span></div>`
+  ).join("");
+
+  return `
+    <div class="compare-view">
+      <button class="cv-close ins-close">Close</button>
+      <h2>Insights — your verdicts so far</h2>
+      <div class="cv-sub">Every time you pick a best output, it lands here. The recommended temperature per call type is simply the one that has won most often — the more verdicts, the more trustworthy.</div>
+      <div class="cmp-scroll">
+        <table class="cmp-table">
+          <thead><tr><th>Call type</th>${temps.map(t => `<th>temp ${esc(t)}</th>`).join("")}<th>Recommended</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="field-lbl" style="margin:16px 0 6px;">Model wins overall</div>
+      ${modelRows}
+
+      <div class="field-lbl" style="margin:20px 0 8px;">Preferred outputs — saved in full</div>
+      <div class="pref-list">
+        ${verdicts.map((v, i) => {
+          const f = v.winner.fields || {};
+          const t = (v.winner.temperature===null||v.winner.temperature===undefined) ? "?" : v.winner.temperature;
+          const beat = (v.others||[]).map(o => (o.temperature===null||o.temperature===undefined?"?":o.temperature)).join(", ");
+          return `
+          <div class="pref-item" data-idx="${i}">
+            <div class="pref-head">
+              <div>
+                <div class="pref-title">${esc(f.patient_name || f.call_type || "call")} <span class="pref-meta">${esc(v.call_type || "unknown")}</span></div>
+                <div class="pref-sub">${esc(v.winner.label)} · temp ${esc(String(t))}${v.winner.prompt_version ? ' · '+esc(v.winner.prompt_version) : ''}${beat ? ' · beat temp '+esc(beat) : ''}</div>
+              </div>
+              <span class="pref-toggle">show output ▸</span>
+            </div>
+            <div class="pref-body">
+              ${f.one_line_summary ? `<div class="pref-summary">${esc(f.one_line_summary)}</div>` : ''}
+              <pre class="pref-json">${esc(JSON.stringify(f, null, 2))}</pre>
+              ${v.transcript ? `<div class="field-lbl" style="margin-top:10px;">Transcript</div><pre class="pref-json pref-transcript">${esc(v.transcript)}</pre>` : ''}
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button class="cv-close ins-export" style="float:none;">Export preferred outputs</button>
+        <button class="cv-close ins-clear" style="float:none;">Clear all verdicts</button>
+      </div>
+    </div>`;
+}
+
+function renderLedger(){
+  const el = document.getElementById("content");
+  if(allCalls.length === 0){
+    let head = "";
+    if(insightsOpen && verdicts.length > 0) head = buildInsights();
+    el.innerHTML = head + `<div class="empty">
+      <div class="big">${verdicts.length ? "Calls cleared — your verdicts are kept" : "Nothing loaded yet"}</div>
+      <div class="small">${verdicts.length
+        ? "Your " + verdicts.length + " preference" + (verdicts.length>1?"s are":" is") + " still recorded. Load exports again and anything you already marked will show its ★ automatically. Open Insights above to see the temperature recommendations."
+        : "Drop in a bench export to see calls here — flagged calls, outcomes, and full extraction detail, laid out the way a doctor would scan a chart."}</div>
+    </div>`;
+    if(head){
+      el.querySelectorAll(".pref-head").forEach(h => {
+        h.addEventListener("click", () => h.closest(".pref-item").classList.toggle("open"));
+      });
+      const expB = el.querySelector(".ins-export");
+      if(expB) expB.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const payload = verdicts.map(v => ({
+          call_type: v.call_type, chosen_model: v.winner.label,
+          temperature: v.winner.temperature, prompt_version: v.winner.prompt_version,
+          stt_language: v.stt_language || null, output: v.winner.fields,
+          perf: v.winner.perf || null,
+          rejected: (v.others||[]).map(o => ({ model: o.label, temperature: o.temperature, output: o.fields })),
+          decided_at: v.ts,
+        }));
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+        const a = document.createElement("a");
+        if(URL.createObjectURL){
+          a.href = URL.createObjectURL(blob);
+          a.download = "desklens_preferred_outputs_" + new Date().toISOString().slice(0,10) + ".json";
+          document.body.appendChild(a); a.click(); a.remove();
+        }
+      });
+      el.querySelectorAll(".cv-close").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if(btn.classList.contains("ins-clear")){
+            if(confirm("Delete all " + verdicts.length + " verdicts? This cannot be undone (unless you saved a session).")){
+              verdicts = []; insightsOpen = false; render();
+            }
+            return;
+          }
+          insightsOpen = false; render();
+        });
+      });
+    }
+    return;
+  }
+  const visible = applyFilter(allCalls);
+  if(visible.length === 0){
+    el.innerHTML = `<div class="empty"><div class="big">No calls match this filter</div><div class="small">Try a different filter above.</div></div>`;
+    return;
+  }
+
+  let prefix = "";
+  if(compareView){
+    prefix += buildCompareView(compareView.ids, compareView.winnerKey);
+  }
+  if(insightsOpen && verdicts.length > 0){
+    prefix += buildInsights();
+  }
+  if(selectedIds.size > 0 && !compareView){
+    const selCalls = allCalls.filter(c => selectedIds.has(c.id));
+    const nOutputs = selCalls.reduce((n,c) => n + c.models.filter(m => !m.error).length, 0);
+    const canCompare = nOutputs >= 2;
+    prefix += `
+      <div class="compare-bar">
+        <span class="cb-msg">${selectedIds.size} call${selectedIds.size>1?'s':''} selected · ${nOutputs} output${nOutputs!==1?'s':''}${canCompare ? '' : ' — need at least 2 outputs to compare'}</span>
+        <span class="cb-actions">
+          <button class="cb-go" ${canCompare?'':'disabled'}>Compare selected</button>
+          <button class="cb-cancel">Clear selection</button>
+        </span>
+      </div>`;
+  }
+  el.innerHTML = prefix + `<div class="ledger">` + visible.map((call, idx) => {
+    const f = call.primary.fields;
+    const urg = urgencyOf(call);
+    const isOpen = openIds.has(call.id);
+    const title = f.patient_name || (f.call_category === "non_patient_call" ? "Non-patient call" : "Unnamed patient");
+    const sub = f.one_line_summary || "(no summary)";
+    const runMeta = [
+      call.models.length === 1 ? call.primary.label : call.models.length + " models",
+      call.temperature !== null && call.temperature !== undefined ? "temp " + call.temperature : null,
+      call.prompt_version || null,
+    ].filter(Boolean).join(" · ");
+    const caseNum = "CALL-" + String(idx+1).padStart(4,"0");
+
+    const prefSet = preferredKeys();
+    const isPreferred = call.models.some(m => prefSet.has(call.sig + "::" + m.label));
+    const badges = [];
+    if(isPreferred) badges.push(`<span class="badge preferred">★ preferred</span>`);
+    badges.push(`<span class="badge ${urg}">${esc(urg)}</span>`);
+    if(f.flags && f.flags.length) badges.push(`<span class="badge flag">${f.flags.length} flag${f.flags.length>1?'s':''}</span>`);
+    if(f.outcome) badges.push(`<span class="badge outcome">${esc(f.outcome.replace(/_/g,' '))}</span>`);
+
+    const appt = f.appointment;
+    const apptStr = appt ? `${esc(appt.action||'—')}${appt.date ? ' · '+esc(appt.date) : ''}${appt.time ? ' '+esc(appt.time) : ''}` : null;
+
+    const modelCompare = call.models.length > 1 ? buildModelCompare(call) : "";
+
+    return `
+      <div class="entry urgency-${urg} ${isOpen?'open':''}" data-id="${esc(call.id)}">
+        <div class="entry-head">
+          <input type="checkbox" class="sel-box" data-id="${esc(call.id)}" ${selectedIds.has(call.id)?'checked':''} title="Select for comparison">
+          <span class="case-id">${caseNum}</span>
+          <div class="entry-main">
+            <div class="entry-title">${esc(title)}</div>
+            <div class="entry-sub">${esc(sub)}</div>
+            <div class="entry-meta">${esc(runMeta)}</div>
+          </div>
+          <div class="badges">${badges.join("")}</div>
+          <span class="chev">▸</span>
+        </div>
+        <div class="entry-body">
+          <div class="body-grid">
+            <div class="field"><div class="field-lbl">Call type</div>${fieldOrEmpty(f.call_type)}</div>
+            <div class="field"><div class="field-lbl">Confidence</div>${fieldOrEmpty(f.confidence)}</div>
+            <div class="field"><div class="field-lbl">Patient age</div>${fieldOrEmpty(f.patient_age)}</div>
+            <div class="field"><div class="field-lbl">Language (STT)</div>${fieldOrEmpty(call.stt_language)}</div>
+            <div class="field"><div class="field-lbl">Symptoms</div>${pillList(f.symptoms_mentioned)}</div>
+            <div class="field"><div class="field-lbl">Procedures</div>${pillList(f.procedures_mentioned)}</div>
+            <div class="field"><div class="field-lbl">Medications</div>${pillList(f.medications_mentioned)}</div>
+            <div class="field"><div class="field-lbl">Appointment</div>${fieldOrEmpty(apptStr)}</div>
+            <div class="field"><div class="field-lbl">Action items</div>${pillList(f.action_items)}</div>
+            <div class="field"><div class="field-lbl">Flags</div>${pillList(f.flags, "none raised")}</div>
+            ${f.detailed_summary ? `<div class="summary-block"><strong>Detail:</strong> ${esc(f.detailed_summary)}</div>` : ""}
+            ${modelCompare}
+          </div>
+        </div>
+      </div>`;
+  }).join("") + `</div>`;
+
+  el.querySelectorAll(".sel-box").forEach(box => {
+    box.addEventListener("click", ev => ev.stopPropagation());
+    box.addEventListener("change", () => {
+      const id = box.dataset.id;
+      if(box.checked) selectedIds.add(id); else selectedIds.delete(id);
+      compareView = null;
+      render();
+    });
+  });
+  const goBtn = el.querySelector(".cb-go");
+  if(goBtn) goBtn.addEventListener("click", () => {
+    compareView = { ids: [...selectedIds], winnerKey: null };
+    render();
+    const cvEl = document.querySelector(".compare-view"); if(cvEl && cvEl.scrollIntoView) cvEl.scrollIntoView({behavior:"smooth", block:"start"});
+  });
+  const cancelBtn = el.querySelector(".cb-cancel");
+  if(cancelBtn) cancelBtn.addEventListener("click", () => {
+    selectedIds = new Set(); compareView = null; render();
+  });
+  el.querySelectorAll(".cv-close").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if(btn.classList.contains("ins-clear")){
+        if(confirm("Delete all " + verdicts.length + " verdicts? This cannot be undone (unless you saved a session).")){
+          verdicts = []; insightsOpen = false; render();
+        }
+        return;
+      }
+      if(btn.classList.contains("ins-close")){ insightsOpen = false; render(); return; }
+      compareView = null; render();
+    });
+  });
+
+  el.querySelectorAll(".pref-head").forEach(head => {
+    head.addEventListener("click", () => head.closest(".pref-item").classList.toggle("open"));
+  });
+  const expBtn = el.querySelector(".ins-export");
+  if(expBtn) expBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const payload = verdicts.map(v => ({
+      call_type: v.call_type,
+      chosen_model: v.winner.label,
+      temperature: v.winner.temperature,
+      prompt_version: v.winner.prompt_version,
+      stt_language: v.stt_language || null,
+      output: v.winner.fields,
+      perf: v.winner.perf || null,
+      rejected: (v.others||[]).map(o => ({ model: o.label, temperature: o.temperature, output: o.fields })),
+      decided_at: v.ts,
+    }));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+    const a = document.createElement("a");
+    if(URL.createObjectURL){
+      a.href = URL.createObjectURL(blob);
+      a.download = "desklens_preferred_outputs_" + new Date().toISOString().slice(0,10) + ".json";
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  });
+
+  el.querySelectorAll(".pick-btn").forEach(btn => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const key = btn.dataset.key;
+      // rebuild the col info to record the verdict
+      const chosen = allCalls.filter(c => compareView.ids.includes(c.id));
+      const entries = [];
+      chosen.forEach(call => {
+        call.models.filter(m => !m.error).forEach(m => {
+          entries.push({
+            key: call.sig + "::" + m.label,
+            callId: call.id, sig: call.sig, label: m.label,
+            temperature: (call.temperature !== undefined ? call.temperature : null),
+            prompt_version: call.prompt_version || null,
+            call_type: m.fields.call_type || null,
+            call_category: m.fields.call_category || null,
+            fields: m.fields,
+            perf: { seconds: m.seconds, tokens_in: m.tokens_in, tokens_out: m.tokens_out, cost: m.cost },
+            stt_language: call.stt_language || null,
+            transcript: call.transcript || null,
+            source: call.source || null,
+          });
+        });
+      });
+      const winner = entries.find(e => e.key === key);
+      if(!winner) return;
+      const others = entries.filter(e => e.key !== key);
+      verdicts.push({
+        ts: new Date().toISOString(),
+        call_type: winner.call_type || "unknown",
+        call_category: winner.call_category || null,
+        stt_language: winner.stt_language,
+        transcript: winner.transcript,
+        source: winner.source,
+        winner: {
+          callId: winner.callId, sig: winner.sig, label: winner.label,
+          temperature: winner.temperature, prompt_version: winner.prompt_version,
+          fields: winner.fields, perf: winner.perf,
+        },
+        others: others.map(o => ({
+          callId: o.callId, sig: o.sig, label: o.label,
+          temperature: o.temperature, prompt_version: o.prompt_version,
+          fields: o.fields, perf: o.perf,
+        })),
+      });
+      compareView.winnerKey = key;
+      render();
+    });
+  });
+
+  const cvToggle = el.querySelector(".cvDiffOnly");
+  if(cvToggle) cvToggle.addEventListener("change", () => {
+    const cv = el.querySelector(".compare-view");
+    const tbDiff = cv.querySelector(".tb-diff");
+    const tbAll = cv.querySelector(".tb-all");
+    if(cvToggle.checked){ tbDiff.style.display=""; tbAll.style.display="none"; }
+    else { tbDiff.style.display="none"; tbAll.style.display=""; }
+  });
+
+  el.querySelectorAll(".diffOnlyBox").forEach(box => {
+    box.addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      const table = box.closest(".model-compare").querySelector(".cmp-table");
+      const tbDiff = table.querySelector(".tb-diff");
+      const tbAll = table.querySelector(".tb-all");
+      if(box.checked){ tbDiff.style.display = ""; tbAll.style.display = "none"; }
+      else { tbDiff.style.display = "none"; tbAll.style.display = ""; }
+    });
+    box.closest(".cmp-toggle").addEventListener("click", ev => ev.stopPropagation());
+  });
+
+  el.querySelectorAll(".entry-head").forEach(head => {
+    head.addEventListener("click", () => {
+      const entry = head.closest(".entry");
+      const id = entry.dataset.id;
+      if(openIds.has(id)) openIds.delete(id); else openIds.add(id);
+      entry.classList.toggle("open");
+    });
+  });
+}
+
+render();
+</script>
+</body>
+</html>
