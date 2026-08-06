@@ -61,6 +61,8 @@ defaults = {
     "stt_language": "",
     "stt_raw": None,
     "diarized": None,
+    "diarized_text": "",
+    "active_transcript": "",
     "results": {},
     "audio_seconds": 0.0,
 }
@@ -142,6 +144,31 @@ def rupees(model_id, tokens_in, tokens_out, pricing):
 # ----------------------------------------------------------------------------
 # API calls
 # ----------------------------------------------------------------------------
+
+def build_diarized_text(diarized, merge_consecutive=True):
+    """Turns Sarvam's diarized entries into a speaker-labelled transcript the model can read."""
+    if not diarized:
+        return ""
+    entries = diarized.get("entries", [])
+    if not entries:
+        return ""
+
+    lines, last_speaker, buffer = [], None, []
+    for e in entries:
+        spk = e.get("speaker_id", "?")
+        txt = (e.get("transcript") or "").strip()
+        if not txt:
+            continue
+        if merge_consecutive and spk == last_speaker:
+            buffer.append(txt)
+        else:
+            if buffer:
+                lines.append(f"{last_speaker}: {' '.join(buffer)}")
+            last_speaker, buffer = spk, [txt]
+    if buffer:
+        lines.append(f"{last_speaker}: {' '.join(buffer)}")
+    return "\n".join(lines)
+
 
 def sarvam_rest(audio_bytes, filename, key, mode, language_code):
     """Synchronous. Files under 30 seconds only."""
@@ -418,6 +445,7 @@ with tab_audio:
                             st.session_state.transcript = first.get("transcript", "")
                             st.session_state.stt_language = first.get("language_code", "")
                             st.session_state.diarized = first.get("diarized_transcript")
+                            st.session_state.diarized_text = build_diarized_text(st.session_state.diarized)
                             status.update(label=f"{len(payloads)} transcript(s) ready", state="complete")
                     else:
                         f = uploads[0]
@@ -427,6 +455,7 @@ with tab_audio:
                         st.session_state.transcript = payload.get("transcript", "")
                         st.session_state.stt_language = payload.get("language_code", "")
                         st.session_state.diarized = payload.get("diarized_transcript")
+                        st.session_state.diarized_text = build_diarized_text(st.session_state.diarized)
                         status.update(label="Transcript ready", state="complete")
                 except requests.HTTPError as e:
                     status.update(label="Sarvam rejected the request", state="error")
@@ -443,6 +472,7 @@ with tab_paste:
         st.session_state.stt_language = lang_manual
         st.session_state.stt_raw = None
         st.session_state.diarized = None
+        st.session_state.diarized_text = ""
         st.success("Loaded.")
 
 # ----------------------------------------------------------------------------
@@ -462,9 +492,41 @@ if st.session_state.transcript:
         st.info(f"`language` should be **{st.session_state.stt_language}**, taken from this metadata — "
                 "never inferred from the transcript text.")
 
-    edited = st.text_area("Transcript (editable)", st.session_state.transcript, height=220)
-    if edited != st.session_state.transcript:
-        st.session_state.transcript = edited
+    has_diar = bool(st.session_state.diarized_text)
+    if has_diar:
+        which = st.radio(
+            "What the extraction models will read",
+            ["Speaker-labelled (diarized)", "Flat text"],
+            horizontal=True,
+            help="Speaker labels let the model tell caller from staff — needed for "
+                 "price-asked-vs-price-given and who-promised-what.",
+        )
+        use_diarized = which.startswith("Speaker")
+    else:
+        use_diarized = False
+        if st.session_state.diarized is not None:
+            st.caption("No speaker turns came back for this call — using flat text.")
+
+    if use_diarized:
+        edited_d = st.text_area("Transcript sent to models (editable)",
+                                st.session_state.diarized_text, height=260)
+        if edited_d != st.session_state.diarized_text:
+            st.session_state.diarized_text = edited_d
+        with st.expander("Flat transcript (not sent)"):
+            st.text(st.session_state.transcript)
+    else:
+        edited = st.text_area("Transcript sent to models (editable)",
+                              st.session_state.transcript, height=220)
+        if edited != st.session_state.transcript:
+            st.session_state.transcript = edited
+        if has_diar:
+            with st.expander("Speaker-labelled version (not sent)"):
+                st.text(st.session_state.diarized_text)
+
+    # what actually goes to the models
+    st.session_state.active_transcript = (
+        st.session_state.diarized_text if use_diarized else st.session_state.transcript
+    )
 
     if st.session_state.diarized:
         with st.expander("Diarized turns"):
@@ -512,9 +574,11 @@ st.subheader("4 · Run models")
 chosen = st.multiselect("Models", list(MODELS.keys()),
                         default=["Gemini 2.5 Flash-Lite (AI Studio)", "Claude Haiku 4.5"])
 
+active_tx = st.session_state.get("active_transcript") or st.session_state.transcript
+
 run_col, clear_col = st.columns([1, 4])
 run_now = run_col.button("Run selected", type="primary",
-                         disabled=not (st.session_state.transcript and prompt_text and chosen))
+                         disabled=not (active_tx and prompt_text and chosen))
 if clear_col.button("Clear results"):
     st.session_state.results = {}
 
@@ -539,14 +603,14 @@ if run_now:
             try:
                 if m["vendor"] == "google-aistudio":
                     text, elapsed, t_in, t_out = call_gemini(
-                        m["id"], key, prompt_text, st.session_state.transcript, temperature, force_json)
+                        m["id"], key, prompt_text, active_tx, temperature, force_json)
                 elif m["vendor"] == "google-vertex":
                     text, elapsed, t_in, t_out = call_gemini_vertex(
                         m["id"], vertex_project, vertex_location, vertex_sa_json,
-                        prompt_text, st.session_state.transcript, temperature, force_json)
+                        prompt_text, active_tx, temperature, force_json)
                 else:
                     text, elapsed, t_in, t_out = call_anthropic(
-                        m["id"], key, prompt_text, st.session_state.transcript, temperature)
+                        m["id"], key, prompt_text, active_tx, temperature)
 
                 parsed, err = parse_json_loose(text)
                 cleaned, changes = apply_pipeline_rules(parsed, st.session_state.stt_language) if parsed else (None, [])
@@ -671,7 +735,8 @@ if st.session_state.results:
         json.dumps({
             "prompt_version": prompt_version, "temperature": temperature,
             "stt_language": st.session_state.stt_language,
-            "transcript": st.session_state.transcript,
+            "transcript": active_tx,
+            "diarized": bool(st.session_state.get("diarized_text")) and active_tx == st.session_state.get("diarized_text"),
             "results": {k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
                         for k, v in st.session_state.results.items()},
         }, ensure_ascii=False, indent=2),
