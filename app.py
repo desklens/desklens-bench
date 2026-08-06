@@ -627,6 +627,7 @@ if run_now:
                         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                         "prompt_version": prompt_version, "model": label,
                         "temperature": temperature, "stt_language": st.session_state.stt_language,
+                        "diarized": bool(st.session_state.get("diarized_text")) and active_tx == st.session_state.get("diarized_text"),
                         "seconds": round(elapsed, 2), "tokens_in": t_in, "tokens_out": t_out,
                         "output": parsed,
                     }, ensure_ascii=False) + "\n")
