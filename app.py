@@ -643,15 +643,19 @@ with tab_sys:
     with sc2:
         sys_file = st.file_uploader("Load a file", type=["txt", "md"], key="prompt_upload")
         if sys_file:
-            st.session_state.prompt_text = sys_file.getvalue().decode("utf-8")
+            loaded = sys_file.getvalue().decode("utf-8")
+            if st.session_state.get("_sys_loaded_name") != sys_file.name:
+                st.session_state["_sys_loaded_name"] = sys_file.name
+                st.session_state["sys_box"] = loaded
+                st.session_state.prompt_text = loaded
+                st.rerun()
         prompt_version = st.text_input("Version label", value="v2_dental")
         st.download_button("Save to file",
-                           st.session_state.get("prompt_text") or " ",
+                           st.session_state.get("sys_box") or " ",
                            file_name=f"system_instruction_{prompt_version}.txt")
     with sc1:
         prompt_text = st.text_area(
             "Sent as the system instruction, exactly as in AI Studio",
-            value=st.session_state.get("prompt_text", ""),
             height=380,
             placeholder="Paste system_instruction_dental.txt here.",
             key="sys_box",
@@ -669,22 +673,28 @@ with tab_schema:
     with kc2:
         schema_file = st.file_uploader("Load a file", type=["json"], key="schema_upload")
         if schema_file:
-            st.session_state.schema_text = schema_file.getvalue().decode("utf-8")
+            loaded = schema_file.getvalue().decode("utf-8")
+            if st.session_state.get("_schema_loaded_name") != schema_file.name:
+                st.session_state["_schema_loaded_name"] = schema_file.name
+                st.session_state["schema_box"] = loaded
+                st.session_state.schema_text = loaded
+                st.rerun()
         schema_version = st.text_input("Schema label", value="v2")
         st.download_button("Save to file",
-                           st.session_state.get("schema_text") or " ",
+                           st.session_state.get("schema_box") or " ",
                            file_name=f"desklens_schema_{schema_version}.json")
         if st.button("Tidy formatting"):
             try:
-                st.session_state.schema_text = json.dumps(
-                    json.loads(st.session_state.get("schema_text", "")), indent=2, ensure_ascii=False)
+                tidy = json.dumps(json.loads(st.session_state.get("schema_box", "")),
+                                  indent=2, ensure_ascii=False)
+                st.session_state["schema_box"] = tidy
+                st.session_state.schema_text = tidy
                 st.rerun()
             except json.JSONDecodeError:
                 st.warning("Fix the JSON first.")
     with kc1:
         schema_text = st.text_area(
             "JSON schema",
-            value=st.session_state.get("schema_text", ""),
             height=380,
             placeholder='{"type": "object", "properties": { ... }, "required": [ ... ]}',
             key="schema_box",
@@ -732,11 +742,20 @@ chosen = st.multiselect("Models", list(MODELS.keys()),
 
 active_tx = st.session_state.get("active_transcript") or st.session_state.transcript
 
+missing = []
+if not active_tx:
+    missing.append("a transcript (step 1)")
+if not prompt_text:
+    missing.append("a system instruction (step 3)")
+if not chosen:
+    missing.append("at least one model")
+
 run_col, clear_col = st.columns([1, 4])
-run_now = run_col.button("Run selected", type="primary",
-                         disabled=not (active_tx and prompt_text and chosen))
+run_now = run_col.button("Run selected", type="primary", disabled=bool(missing))
 if clear_col.button("Clear results"):
     st.session_state.results = {}
+if missing:
+    st.caption("Waiting on: " + ", ".join(missing))
 
 if run_now:
     for label in chosen:
