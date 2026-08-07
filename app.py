@@ -137,6 +137,16 @@ def apply_pipeline_rules(data, stt_language, language_probability=None):
             changes.append(f"key_phrases: removed {len(kp) - len(deduped)} duplicate(s)")
         d["key_phrases"] = deduped
 
+    appt = d.get("appointment")
+    if isinstance(appt, dict) and appt.get("action") in ("requested", "none", "cancelled"):
+        dropped = [k for k in ("date", "time") if appt.get(k)]
+        if dropped:
+            for k in dropped:
+                appt[k] = None
+            changes.append(
+                f"appointment {', '.join(dropped)} cleared - action is '{appt.get('action')}', "
+                f"so no slot was recorded")
+
     if (language_probability is not None
             and language_probability < LANG_PROB_FLOOR
             and d.get("confidence") == "high"):
