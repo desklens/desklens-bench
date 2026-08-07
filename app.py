@@ -227,15 +227,79 @@ def sarvam_batch(files, key, mode, language_code, diarize, num_speakers, progres
         return payloads, failures
 
 
-def call_gemini(model_id, key, prompt, transcript, temperature, force_json):
+def audit_schema(schema):
+    """Flags constructs that behave badly with schema-constrained decoding."""
+    problems = []
+    if not isinstance(schema, dict):
+        return problems
+    props = schema.get("properties", {}) or {}
+
+    def walk(name, node):
+        if not isinstance(node, dict):
+            return
+        nullable = node.get("nullable") is True
+        enum = node.get("enum")
+        if nullable and enum and None not in enum:
+            problems.append(
+                f"`{name}` is nullable but its enum has no null option — the model may be "
+                f"forced to pick one of {enum} when null is the honest answer.")
+        if node.get("type") == "object":
+            for k, v in node.get("properties", {}).items():
+                walk(f"{name}.{k}", v)
+        if node.get("type") == "array":
+            walk(f"{name}[]", node.get("items", {}))
+
+    for k, v in props.items():
+        walk(k, v)
+
+    required = set(schema.get("required", []))
+    nullable_required = [
+        k for k in required
+        if props.get(k, {}).get("nullable") is True and props.get(k, {}).get("enum")
+    ]
+    if nullable_required:
+        problems.append(
+            "These are required AND nullable-with-enum, the riskiest combination: "
+            + ", ".join(f"`{k}`" for k in nullable_required))
+    return problems
+
+
+def schema_for_anthropic(node):
+    """Anthropic uses plain JSON Schema — convert OpenAPI-style nullable to a type union."""
+    if not isinstance(node, dict):
+        return node
+    out = {}
+    for k, v in node.items():
+        if k == "nullable":
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {pk: schema_for_anthropic(pv) for pk, pv in v.items()}
+        elif k == "items":
+            out[k] = schema_for_anthropic(v)
+        else:
+            out[k] = v
+    if node.get("nullable") is True and "type" in out:
+        t = out["type"]
+        out["type"] = [t, "null"] if isinstance(t, str) else t
+        if "enum" in out and None not in out["enum"]:
+            out["enum"] = list(out["enum"]) + [None]
+    return out
+
+
+def call_gemini(model_id, key, prompt, transcript, temperature, force_json, schema=None):
     cfg = {"temperature": temperature, "thinkingConfig": {"thinkingBudget": 0}}
-    if force_json:
+    if force_json or schema:
         cfg["responseMimeType"] = "application/json"
+    if schema:
+        cfg["responseSchema"] = schema
 
     body = {
-        "contents": [{"role": "user", "parts": [{"text": f"{prompt}\n\nTRANSCRIPT:\n{transcript}"}]}],
+        "contents": [{"role": "user", "parts": [{"text": f"TRANSCRIPT:\n{transcript}"}]}],
         "generationConfig": cfg,
     }
+    if prompt and prompt.strip():
+        body["systemInstruction"] = {"parts": [{"text": prompt}]}
+
     t0 = time.time()
     r = requests.post(
         f"{GEMINI_BASE}/{model_id}:generateContent",
@@ -295,17 +359,22 @@ def get_vertex_token(service_account_json):
 
 
 def call_gemini_vertex(model_id, project_id, location, service_account_json,
-                       prompt, transcript, temperature, force_json):
+                       prompt, transcript, temperature, force_json, schema=None):
     token = get_vertex_token(service_account_json)
 
     cfg = {"temperature": temperature, "thinkingConfig": {"thinkingBudget": 0}}
-    if force_json:
+    if force_json or schema:
         cfg["responseMimeType"] = "application/json"
+    if schema:
+        cfg["responseSchema"] = schema
 
     body = {
-        "contents": [{"role": "user", "parts": [{"text": f"{prompt}\n\nTRANSCRIPT:\n{transcript}"}]}],
+        "contents": [{"role": "user", "parts": [{"text": f"TRANSCRIPT:\n{transcript}"}]}],
         "generationConfig": cfg,
     }
+    if prompt and prompt.strip():
+        body["systemInstruction"] = {"parts": [{"text": prompt}]}
+
     url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
           f"/locations/{location}/publishers/google/models/{model_id}:generateContent")
 
@@ -326,7 +395,23 @@ def call_gemini_vertex(model_id, project_id, location, service_account_json,
     return text, elapsed, usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
-def call_anthropic(model_id, key, prompt, transcript, temperature):
+def call_anthropic(model_id, key, prompt, transcript, temperature, schema=None):
+    body = {
+        "model": model_id,
+        "max_tokens": 4000,
+        "temperature": min(temperature, 1.0),
+        "system": prompt,
+        "messages": [{"role": "user", "content": f"TRANSCRIPT:\n{transcript}"}],
+    }
+    if schema:
+        # Anthropic has no responseSchema; a forced tool call is its equivalent
+        body["tools"] = [{
+            "name": "record_call",
+            "description": "Record the structured analysis of this call.",
+            "input_schema": schema_for_anthropic(schema),
+        }]
+        body["tool_choice"] = {"type": "tool", "name": "record_call"}
+
     t0 = time.time()
     r = requests.post(
         ANTHROPIC_URL,
@@ -335,20 +420,20 @@ def call_anthropic(model_id, key, prompt, transcript, temperature):
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         },
-        json={
-            "model": model_id,
-            "max_tokens": 4000,
-            "temperature": min(temperature, 1.0),
-            "system": prompt,
-            "messages": [{"role": "user", "content": f"TRANSCRIPT:\n{transcript}"}],
-        },
+        json=body,
         timeout=300,
     )
     elapsed = time.time() - t0
     r.raise_for_status()
     data = r.json()
 
-    text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+    blocks = data.get("content", [])
+    tool_blocks = [b for b in blocks if b.get("type") == "tool_use"]
+    if tool_blocks:
+        text = json.dumps(tool_blocks[0].get("input", {}), ensure_ascii=False)
+    else:
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
     usage = data.get("usage", {})
     return text, elapsed, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
 
@@ -549,21 +634,92 @@ if st.session_state.transcript:
 # Step 3 — prompt
 # ----------------------------------------------------------------------------
 
-st.subheader("3 · Prompt")
+st.subheader("3 · System instruction and schema")
 
-prompt_file = st.file_uploader("Load a saved prompt", type=["txt", "md"], key="prompt_upload")
-if prompt_file:
-    st.session_state.prompt_text = prompt_file.getvalue().decode("utf-8")
+tab_sys, tab_schema = st.tabs(["System instruction", "Structured output"])
 
-pc1, pc2 = st.columns([3, 1])
-prompt_text = pc1.text_area(
-    "Extraction prompt",
-    value=st.session_state.get("prompt_text", ""),
-    height=280,
-    placeholder="Paste your derma_v6 prompt here.",
-)
-prompt_version = pc2.text_input("Version label", value="derma_v6")
-pc2.download_button("Save prompt", prompt_text or " ", file_name=f"{prompt_version}.txt")
+with tab_sys:
+    sc1, sc2 = st.columns([3, 1])
+    with sc2:
+        sys_file = st.file_uploader("Load a file", type=["txt", "md"], key="prompt_upload")
+        if sys_file:
+            st.session_state.prompt_text = sys_file.getvalue().decode("utf-8")
+        prompt_version = st.text_input("Version label", value="v2_dental")
+        st.download_button("Save to file",
+                           st.session_state.get("prompt_text") or " ",
+                           file_name=f"system_instruction_{prompt_version}.txt")
+    with sc1:
+        prompt_text = st.text_area(
+            "Sent as the system instruction, exactly as in AI Studio",
+            value=st.session_state.get("prompt_text", ""),
+            height=380,
+            placeholder="Paste system_instruction_dental.txt here.",
+            key="sys_box",
+        )
+        st.session_state.prompt_text = prompt_text
+        if prompt_text:
+            st.caption(f"{len(prompt_text):,} characters · roughly {len(prompt_text)//4:,} tokens per call")
+
+with tab_schema:
+    use_schema = st.toggle("Enforce structured output", value=bool(st.session_state.get("schema_text")))
+    st.caption("Gemini receives this as responseSchema; Claude as a forced tool call. "
+               "The decoder itself is constrained, so field names and enums cannot drift.")
+
+    kc1, kc2 = st.columns([3, 1])
+    with kc2:
+        schema_file = st.file_uploader("Load a file", type=["json"], key="schema_upload")
+        if schema_file:
+            st.session_state.schema_text = schema_file.getvalue().decode("utf-8")
+        schema_version = st.text_input("Schema label", value="v2")
+        st.download_button("Save to file",
+                           st.session_state.get("schema_text") or " ",
+                           file_name=f"desklens_schema_{schema_version}.json")
+        if st.button("Tidy formatting"):
+            try:
+                st.session_state.schema_text = json.dumps(
+                    json.loads(st.session_state.get("schema_text", "")), indent=2, ensure_ascii=False)
+                st.rerun()
+            except json.JSONDecodeError:
+                st.warning("Fix the JSON first.")
+    with kc1:
+        schema_text = st.text_area(
+            "JSON schema",
+            value=st.session_state.get("schema_text", ""),
+            height=380,
+            placeholder='{"type": "object", "properties": { ... }, "required": [ ... ]}',
+            key="schema_box",
+        )
+        st.session_state.schema_text = schema_text
+
+    active_schema = None
+    if schema_text.strip():
+        try:
+            parsed_schema = json.loads(schema_text)
+            props = parsed_schema.get("properties", {})
+            order = parsed_schema.get("propertyOrdering") or list(props.keys())
+            st.success(f"Valid JSON · {len(props)} field(s), {len(parsed_schema.get('required', []))} required")
+
+            if order:
+                st.caption(f"Fields generate in this order — first: `{order[0]}` · last: `{order[-1]}`")
+                if "confidence" in order and order[-1] != "confidence":
+                    st.warning("`confidence` is not the last field. Structured output generates in order, "
+                               "so it will be decided before the facts it is meant to judge.")
+
+            issues = audit_schema(parsed_schema)
+            if issues:
+                st.warning("Worth checking before trusting the output:")
+                for p in issues:
+                    st.markdown(f"- {p}")
+
+            if use_schema:
+                active_schema = parsed_schema
+            else:
+                st.info("Parsed but not enforced — turn on the toggle above.")
+        except json.JSONDecodeError as e:
+            st.error(f"Not valid JSON: {e}")
+    else:
+        st.caption("No schema — models follow the system instruction only.")
+
 
 # ----------------------------------------------------------------------------
 # Step 4 — run
@@ -572,7 +728,7 @@ pc2.download_button("Save prompt", prompt_text or " ", file_name=f"{prompt_versi
 st.subheader("4 · Run models")
 
 chosen = st.multiselect("Models", list(MODELS.keys()),
-                        default=["Gemini 2.5 Flash-Lite (AI Studio)", "Claude Haiku 4.5"])
+                        default=["Gemini 2.5 Flash-Lite (Vertex)", "Gemini 2.5 Flash (Vertex)"])
 
 active_tx = st.session_state.get("active_transcript") or st.session_state.transcript
 
@@ -603,14 +759,14 @@ if run_now:
             try:
                 if m["vendor"] == "google-aistudio":
                     text, elapsed, t_in, t_out = call_gemini(
-                        m["id"], key, prompt_text, active_tx, temperature, force_json)
+                        m["id"], key, prompt_text, active_tx, temperature, force_json, active_schema)
                 elif m["vendor"] == "google-vertex":
                     text, elapsed, t_in, t_out = call_gemini_vertex(
                         m["id"], vertex_project, vertex_location, vertex_sa_json,
-                        prompt_text, active_tx, temperature, force_json)
+                        prompt_text, active_tx, temperature, force_json, active_schema)
                 else:
                     text, elapsed, t_in, t_out = call_anthropic(
-                        m["id"], key, prompt_text, active_tx, temperature)
+                        m["id"], key, prompt_text, active_tx, temperature, active_schema)
 
                 parsed, err = parse_json_loose(text)
                 cleaned, changes = apply_pipeline_rules(parsed, st.session_state.stt_language) if parsed else (None, [])
@@ -625,7 +781,7 @@ if run_now:
                 with open(RUNS_FILE, "a", encoding="utf-8") as fh:
                     fh.write(json.dumps({
                         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "prompt_version": prompt_version, "model": label,
+                        "prompt_version": prompt_version, "model": label, "schema_enforced": bool(active_schema),
                         "temperature": temperature, "stt_language": st.session_state.stt_language,
                         "diarized": bool(st.session_state.get("diarized_text")) and active_tx == st.session_state.get("diarized_text"),
                         "seconds": round(elapsed, 2), "tokens_in": t_in, "tokens_out": t_out,
@@ -735,6 +891,7 @@ if st.session_state.results:
         "Download this comparison",
         json.dumps({
             "prompt_version": prompt_version, "temperature": temperature,
+            "schema_enforced": bool(active_schema),
             "stt_language": st.session_state.stt_language,
             "transcript": active_tx,
             "diarized": bool(st.session_state.get("diarized_text")) and active_tx == st.session_state.get("diarized_text"),
