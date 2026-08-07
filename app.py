@@ -971,3 +971,110 @@ if os.path.exists(RUNS_FILE):
                 st.session_state["_confirm_clear_history"] = True
         if st.session_state.get("_confirm_clear_history"):
             st.warning("This deletes all run history permanently. Press **Clear history** once more to confirm.")
+
+# ----------------------------------------------------------------------------
+# Step 6 — export the whole setup
+# ----------------------------------------------------------------------------
+
+st.subheader("6 · Export the whole setup")
+st.caption("Everything needed to reproduce this run — settings, system instruction, schema, transcript "
+           "and outputs — in one file. API keys and the Vertex credential are never included.")
+
+
+def build_full_export():
+    ss = st.session_state
+    return {
+        "desklens_bench_export": 2,
+        "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "transcription": {
+            "engine": "sarvam saaras:v3",
+            "mode": stt_mode,
+            "language_code_requested": language_code,
+            "batch_api": use_batch,
+            "diarization": diarize,
+            "num_speakers": int(num_speakers),
+            "language_code_detected": ss.get("stt_language"),
+            "language_probability": ss.get("language_probability"),
+        },
+        "extraction": {
+            "temperature": temperature,
+            "force_json": force_json,
+            "schema_enforced": bool(active_schema),
+            "show_cleaned_output": clean_output,
+            "models_selected": chosen,
+            "pricing_per_million_tokens": {k: {"in": v[0], "out": v[1]} for k, v in pricing.items()},
+        },
+        "system_instruction": {
+            "version_label": prompt_version,
+            "characters": len(prompt_text or ""),
+            "text": prompt_text,
+        },
+        "schema": {
+            "version_label": schema_version,
+            "enforced": bool(active_schema),
+            "json": active_schema if active_schema else (
+                json.loads(schema_text) if schema_text.strip() else None),
+        },
+        "transcript": {
+            "sent_to_models": active_tx,
+            "used_diarized": bool(ss.get("diarized_text")) and active_tx == ss.get("diarized_text"),
+            "flat": ss.get("transcript"),
+            "diarized": ss.get("diarized_text"),
+            "sarvam_raw": ss.get("stt_raw"),
+        },
+        "results": {
+            k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
+            for k, v in ss.get("results", {}).items()
+        },
+    }
+
+
+ec1, ec2 = st.columns([1, 2])
+with ec1:
+    try:
+        payload = json.dumps(build_full_export(), ensure_ascii=False, indent=2)
+        st.download_button(
+            "Download full setup", payload,
+            file_name=f"desklens_setup_{prompt_version}_{time.strftime('%Y%m%d_%H%M')}.json",
+            type="primary",
+        )
+        st.caption(f"{len(payload)/1024:.0f} KB")
+    except Exception as e:
+        st.error(f"Could not build the export: {e}")
+
+with ec2:
+    restore = st.file_uploader("Restore a setup file", type=["json"], key="restore_upload")
+    if restore:
+        try:
+            data = json.loads(restore.getvalue().decode("utf-8"))
+            if not data.get("desklens_bench_export"):
+                st.error("That is not a DeskLens setup file.")
+            elif st.session_state.get("_restored_name") != restore.name:
+                st.session_state["_restored_name"] = restore.name
+                si = (data.get("system_instruction") or {}).get("text")
+                if si:
+                    st.session_state["sys_box"] = si
+                    st.session_state.prompt_text = si
+                sc = (data.get("schema") or {}).get("json")
+                if sc:
+                    txt = json.dumps(sc, indent=2, ensure_ascii=False)
+                    st.session_state["schema_box"] = txt
+                    st.session_state.schema_text = txt
+                tr = data.get("transcript") or {}
+                if tr.get("flat"):
+                    st.session_state.transcript = tr["flat"]
+                if tr.get("diarized"):
+                    st.session_state.diarized_text = tr["diarized"]
+                if tr.get("sent_to_models"):
+                    st.session_state.active_transcript = tr["sent_to_models"]
+                st.session_state.stt_language = (
+                    data.get("transcription", {}).get("language_code_detected") or "")
+                st.session_state.language_probability = (
+                    data.get("transcription", {}).get("language_probability"))
+                st.rerun()
+            else:
+                st.success("Restored: system instruction, schema and transcript.")
+                st.caption("Sidebar settings are shown in the file but must be set by hand — "
+                           "Streamlit cannot repopulate those controls.")
+        except json.JSONDecodeError as e:
+            st.error(f"Not valid JSON: {e}")
