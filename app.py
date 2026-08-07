@@ -62,6 +62,7 @@ defaults = {
     "stt_raw": None,
     "diarized": None,
     "diarized_text": "",
+    "language_probability": None,
     "active_transcript": "",
     "results": {},
     "audio_seconds": 0.0,
@@ -109,7 +110,10 @@ def flatten(obj, prefix=""):
     return out
 
 
-def apply_pipeline_rules(data, stt_language):
+LANG_PROB_FLOOR = 0.60
+
+
+def apply_pipeline_rules(data, stt_language, language_probability=None):
     """The post-processing your production code does. Kept separate from the model."""
     if not isinstance(data, dict):
         return data, []
@@ -132,6 +136,14 @@ def apply_pipeline_rules(data, stt_language):
         if len(deduped) != len(kp):
             changes.append(f"key_phrases: removed {len(kp) - len(deduped)} duplicate(s)")
         d["key_phrases"] = deduped
+
+    if (language_probability is not None
+            and language_probability < LANG_PROB_FLOOR
+            and d.get("confidence") == "high"):
+        d["confidence"] = "low"
+        changes.append(
+            f"confidence: high -> low (STT language confidence {language_probability:.2f} "
+            f"is below {LANG_PROB_FLOOR})")
 
     return d, changes
 
@@ -529,6 +541,7 @@ with tab_audio:
                             st.session_state.stt_raw = payloads
                             st.session_state.transcript = first.get("transcript", "")
                             st.session_state.stt_language = first.get("language_code", "")
+                            st.session_state.language_probability = first.get("language_probability")
                             st.session_state.diarized = first.get("diarized_transcript")
                             st.session_state.diarized_text = build_diarized_text(st.session_state.diarized)
                             status.update(label=f"{len(payloads)} transcript(s) ready", state="complete")
@@ -539,6 +552,7 @@ with tab_audio:
                         st.session_state.stt_raw = [payload]
                         st.session_state.transcript = payload.get("transcript", "")
                         st.session_state.stt_language = payload.get("language_code", "")
+                        st.session_state.language_probability = payload.get("language_probability")
                         st.session_state.diarized = payload.get("diarized_transcript")
                         st.session_state.diarized_text = build_diarized_text(st.session_state.diarized)
                         status.update(label="Transcript ready", state="complete")
@@ -788,7 +802,9 @@ if run_now:
                         m["id"], key, prompt_text, active_tx, temperature, active_schema)
 
                 parsed, err = parse_json_loose(text)
-                cleaned, changes = apply_pipeline_rules(parsed, st.session_state.stt_language) if parsed else (None, [])
+                cleaned, changes = apply_pipeline_rules(
+                    parsed, st.session_state.stt_language,
+                    st.session_state.get("language_probability")) if parsed else (None, [])
 
                 st.session_state.results[label] = {
                     "model_id": m["id"], "raw_text": text, "parsed": parsed, "cleaned": cleaned,
