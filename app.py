@@ -64,6 +64,10 @@ defaults = {
     "diarized_text": "",
     "language_probability": None,
     "active_transcript": "",
+    "ratings": {},
+    "gt_reasoning": "",
+    "gt_rev": 0,
+    "best_model": None,
     "results": {},
     "audio_seconds": 0.0,
 }
@@ -679,6 +683,85 @@ GT_FIELDS = {
 UNSET = "—"
 
 
+GT_DERIVE_INSTRUCTION = """You are preparing a scoring key for a call-analysis system.
+
+You are given a call transcript and a HUMAN ACCOUNT written by someone who knows what really happened on
+that call - who was actually speaking, what was really agreed. The human account is AUTHORITATIVE. Where it
+contradicts your reading of the transcript, the human is right and you are wrong.
+
+Return the expected value for each field. Rules:
+- Follow the human account first, the transcript second.
+- If neither the human account nor the transcript settles a field, return null for it. A null means "do not
+  score this field". Never guess to fill it in.
+- Booleans are the strings "true" or "false".
+- appointment_action: "booked" only if a slot was actually written down; "requested" if the caller intends to
+  come or the clinic named a time but nothing was recorded; "none" if there is no intent to visit.
+- confidence: "low" if the transcript has garbled lines, is truncated, the sides talk past each other, or who
+  is who is uncertain. Otherwise "high".
+"""
+
+GT_DERIVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "call_category": {"type": "string", "nullable": True,
+                          "enum": ["patient_call", "clinical_consultation", "operations_call",
+                                   "non_patient_call", None]},
+        "call_type": {"type": "string", "nullable": True,
+                      "enum": ["appointment_booking", "reschedule", "cancellation", "procedure_inquiry",
+                               "prescription_refill", "dosage_adjustment", "report_status", "test_results",
+                               "hearing_test", "billing_payment", "complaint", "general_inquiry",
+                               "emergency", "follow_up", "treatment_planning", "other", None]},
+        "urgency": {"type": "string", "nullable": True, "enum": ["emergency", "urgent", "routine", None]},
+        "appointment_action": {"type": "string", "nullable": True,
+                               "enum": ["booked", "rescheduled", "cancelled", "requested", "none", None]},
+        "clinic_told_caller_to_come": {"type": "string", "nullable": True, "enum": ["true", "false", None]},
+        "price_asked": {"type": "string", "nullable": True, "enum": ["true", "false", None]},
+        "price_quoted": {"type": "string", "nullable": True, "enum": ["true", "false", None]},
+        "outcome": {"type": "string", "nullable": True,
+                    "enum": ["resolved", "pending_action", "needs_callback", "escalated", "unresolved", None]},
+        "confidence": {"type": "string", "nullable": True, "enum": ["high", "low", None]},
+        "reasoning": {"type": "string",
+                      "description": "One short sentence per non-null field saying what settled it."},
+    },
+    "propertyOrdering": ["call_category", "call_type", "urgency", "appointment_action",
+                         "clinic_told_caller_to_come", "price_asked", "price_quoted",
+                         "outcome", "confidence", "reasoning"],
+    "required": ["call_category", "call_type", "urgency", "appointment_action",
+                 "clinic_told_caller_to_come", "price_asked", "price_quoted",
+                 "outcome", "confidence", "reasoning"],
+}
+
+GT_KEY_MAP = {"appointment_action": "appointment.action"}
+
+
+def derive_ground_truth(transcript, notes, g_key, a_key, v_proj, v_loc, v_json):
+    """Turns a free-text account of the call into expected field values."""
+    user = f"HUMAN ACCOUNT OF WHAT REALLY HAPPENED:\n{notes or '(none given)'}\n\nTRANSCRIPT:\n{transcript}"
+
+    if v_json and v_proj and v_loc:
+        text, *_ = call_gemini_vertex("gemini-2.5-flash", v_proj, v_loc, v_json,
+                                      GT_DERIVE_INSTRUCTION, user, 0, True, GT_DERIVE_SCHEMA)
+    elif g_key:
+        text, *_ = call_gemini("gemini-2.5-flash", g_key, GT_DERIVE_INSTRUCTION, user, 0, True,
+                               GT_DERIVE_SCHEMA)
+    elif a_key:
+        text, *_ = call_anthropic("claude-sonnet-5", a_key, GT_DERIVE_INSTRUCTION, user, 0,
+                                  GT_DERIVE_SCHEMA)
+    else:
+        raise ValueError("Add a Vertex, Google or Anthropic key in the sidebar first.")
+
+    parsed, err = parse_json_loose(text)
+    if err or not isinstance(parsed, dict):
+        raise ValueError(err or "Could not read the response.")
+
+    fields, reasoning = {}, parsed.pop("reasoning", "")
+    for k, v in parsed.items():
+        if v in (None, "", "null"):
+            continue
+        fields[GT_KEY_MAP.get(k, k)] = v
+    return fields, reasoning
+
+
 def gt_get(obj, path):
     """Reads a possibly-dotted field path out of a model output."""
     cur = obj
@@ -702,17 +785,47 @@ if not st.session_state.transcript:
                "actually happened, and the models get scored against it automatically.")
 else:
     with st.expander("Record what actually happened — used to score the models", expanded=True):
-        st.caption("Write what you know that the transcript does not show, especially who was speaking. "
-                   "Set only the fields you are sure about; blank ones are skipped when scoring.")
+        st.caption("Just describe the call in your own words, especially who was actually speaking and what "
+                   "was really agreed. Then let the system work out the expected field values — you review "
+                   "them before anything is scored.")
 
         notes = st.text_area(
-            "What actually happened", height=90,
-            placeholder="e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. "
-                        "The rep is in training and will come Monday to swap the stock.",
+            "What actually happened", height=110,
+            placeholder="e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. The rep is away at "
+                        "training and will come Monday or Tuesday to swap 10mg stock for 5mg. No patient "
+                        "involved. Audio is poor in places.",
             key="gt_notes_box")
         st.session_state.gt_notes = notes
 
+        dc1, dc2 = st.columns([1, 2])
+        derive = dc1.button("Work out the expected fields", type="primary",
+                            disabled=not st.session_state.transcript)
+        dc2.caption("Your account wins over the transcript. Anything neither settles is left blank "
+                    "and skipped when scoring.")
+
+        if derive:
+            with st.spinner("Reading your account against the transcript"):
+                try:
+                    fields, reasoning = derive_ground_truth(
+                        st.session_state.get("active_transcript") or st.session_state.transcript,
+                        notes, gemini_key, anthropic_key,
+                        vertex_project, vertex_location, vertex_sa_json)
+                    st.session_state.gt_fields = fields
+                    st.session_state.gt_reasoning = reasoning
+                    st.rerun()
+                except requests.HTTPError as e:
+                    st.error(f"{e.response.status_code}: {e.response.text[:300]}")
+                except Exception as e:
+                    st.error(str(e))
+
         gt = st.session_state.setdefault("gt_fields", {})
+
+        if gt:
+            st.success(f"{len(gt)} field(s) worked out — check them and change anything that is wrong.")
+            if st.session_state.get("gt_reasoning"):
+                st.caption(st.session_state["gt_reasoning"])
+
+        st.markdown("**Expected values** — edit any of these; blank means do not score that field")
         cols = st.columns(3)
         for i, (field, options) in enumerate(GT_FIELDS.items()):
             with cols[i % 3]:
@@ -720,19 +833,19 @@ else:
                 choice = st.selectbox(
                     field, [UNSET] + options,
                     index=([UNSET] + options).index(current) if current in options else 0,
-                    key=f"gt_{field}")
+                    key=f"gt_{field}_{st.session_state.get('gt_rev', 0)}")
                 if choice == UNSET:
                     gt.pop(field, None)
                 else:
                     gt[field] = choice
 
-        n_set = len(gt)
-        if n_set:
-            st.success(f"{n_set} field(s) set — models will be scored against these after each run.")
+        if gt:
             if st.button("Clear my reading"):
                 st.session_state.gt_fields = {}
                 st.session_state["gt_notes_box"] = ""
                 st.session_state.gt_notes = ""
+                st.session_state.gt_reasoning = ""
+                st.session_state.gt_rev = st.session_state.get("gt_rev", 0) + 1
                 st.rerun()
         else:
             st.caption("Nothing set yet — scoring is skipped.")
@@ -953,6 +1066,48 @@ if st.session_state.results:
             st.caption("Your note: " + st.session_state["gt_notes"])
         st.divider()
 
+    # ---- your rating of each output ----
+    if ok:
+        st.markdown("**Your rating**")
+        st.caption("Rate what a doctor would actually be happy to read, and mark the one you would ship. "
+                   "Saved with the export and carried into the ledger.")
+
+        ratings = st.session_state.setdefault("ratings", {})
+        rate_cols = st.columns(len(ok))
+        for col, label in zip(rate_cols, ok.keys()):
+            with col:
+                st.markdown(f"**{label}**")
+                stars = st.slider("Quality", 1, 5, ratings.get(label, {}).get("stars", 3),
+                                  key=f"rate_{label}",
+                                  help="1 = would mislead a doctor · 5 = would ship as is")
+                note = st.text_input("Why", value=ratings.get(label, {}).get("note", ""),
+                                     key=f"ratenote_{label}",
+                                     placeholder="e.g. invented the 500 figure")
+                ratings[label] = {"stars": stars, "note": note}
+
+        best = st.radio("Which would you ship?", ["not decided"] + list(ok.keys()),
+                        horizontal=True,
+                        index=(["not decided"] + list(ok.keys())).index(st.session_state.get("best_model"))
+                        if st.session_state.get("best_model") in ok else 0)
+        st.session_state.best_model = None if best == "not decided" else best
+
+        summary_bits = []
+        for label in ok:
+            r = ratings.get(label, {})
+            acc = ""
+            if gt:
+                hits = sum(1 for f, e in gt.items()
+                           if gt_norm(gt_get(
+                               st.session_state.results[label]["cleaned"]
+                               if (clean_output and st.session_state.results[label]["cleaned"])
+                               else st.session_state.results[label]["parsed"], f)) == e)
+                acc = f", {round(100*hits/len(gt))}% vs your reading"
+            star = "★" * r.get("stars", 0) + "☆" * (5 - r.get("stars", 0))
+            mark = "  ← would ship" if st.session_state.get("best_model") == label else ""
+            summary_bits.append(f"{label}: {star}{acc}{mark}")
+        st.caption(" · ".join(summary_bits))
+        st.divider()
+
     failed = {k: v for k, v in st.session_state.results.items() if not v["parsed"]}
 
     # ---- summary strip: one metric card per model ----
@@ -1131,6 +1286,11 @@ def build_full_export():
         "my_reading": {
             "notes": ss.get("gt_notes", ""),
             "fields": ss.get("gt_fields", {}),
+            "derived_reasoning": ss.get("gt_reasoning", ""),
+        },
+        "my_rating": {
+            "per_model": ss.get("ratings", {}),
+            "would_ship": ss.get("best_model"),
         },
         "results": {
             k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
@@ -1177,6 +1337,11 @@ with ec2:
                     st.session_state.diarized_text = tr["diarized"]
                 if tr.get("sent_to_models"):
                     st.session_state.active_transcript = tr["sent_to_models"]
+                rt = data.get("my_rating") or {}
+                if rt.get("per_model"):
+                    st.session_state.ratings = rt["per_model"]
+                if rt.get("would_ship"):
+                    st.session_state.best_model = rt["would_ship"]
                 mr = data.get("my_reading") or {}
                 if mr.get("fields"):
                     st.session_state.gt_fields = mr["fields"]
