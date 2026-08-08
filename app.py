@@ -695,16 +695,22 @@ def gt_norm(v):
     return None if v is None else str(v)
 
 
-if st.session_state.transcript:
-    with st.expander("Your reading of this call (optional) — used to score the models", expanded=False):
-        st.caption("Write what you know actually happened, especially who was speaking. "
+st.subheader("2b · Your reading of this call")
+
+if not st.session_state.transcript:
+    st.caption("Load or paste a transcript in step 1 first — then you can record what you know "
+               "actually happened, and the models get scored against it automatically.")
+else:
+    with st.expander("Record what actually happened — used to score the models", expanded=True):
+        st.caption("Write what you know that the transcript does not show, especially who was speaking. "
                    "Set only the fields you are sure about; blank ones are skipped when scoring.")
 
-        st.session_state.gt_notes = st.text_area(
-            "What actually happened", value=st.session_state.get("gt_notes", ""), height=90,
+        notes = st.text_area(
+            "What actually happened", height=90,
             placeholder="e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. "
                         "The rep is in training and will come Monday to swap the stock.",
             key="gt_notes_box")
+        st.session_state.gt_notes = notes
 
         gt = st.session_state.setdefault("gt_fields", {})
         cols = st.columns(3)
@@ -725,6 +731,7 @@ if st.session_state.transcript:
             st.success(f"{n_set} field(s) set — models will be scored against these after each run.")
             if st.button("Clear my reading"):
                 st.session_state.gt_fields = {}
+                st.session_state["gt_notes_box"] = ""
                 st.session_state.gt_notes = ""
                 st.rerun()
         else:
@@ -1174,6 +1181,7 @@ with ec2:
                 if mr.get("fields"):
                     st.session_state.gt_fields = mr["fields"]
                 if mr.get("notes"):
+                    st.session_state["gt_notes_box"] = mr["notes"]
                     st.session_state.gt_notes = mr["notes"]
                 st.session_state.stt_language = (
                     data.get("transcription", {}).get("language_code_detected") or "")
