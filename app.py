@@ -658,6 +658,78 @@ if st.session_state.transcript:
 # Step 3 — prompt
 # ----------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------
+# Your reading of the call — ground truth for scoring
+# ----------------------------------------------------------------------------
+
+GT_FIELDS = {
+    "call_category": ["patient_call", "clinical_consultation", "operations_call", "non_patient_call"],
+    "call_type": ["appointment_booking", "reschedule", "cancellation", "procedure_inquiry",
+                  "prescription_refill", "dosage_adjustment", "report_status", "test_results",
+                  "hearing_test", "billing_payment", "complaint", "general_inquiry", "emergency",
+                  "follow_up", "treatment_planning", "other"],
+    "urgency": ["emergency", "urgent", "routine"],
+    "appointment.action": ["booked", "rescheduled", "cancelled", "requested", "none"],
+    "clinic_told_caller_to_come": ["true", "false"],
+    "price_asked": ["true", "false"],
+    "price_quoted": ["true", "false"],
+    "outcome": ["resolved", "pending_action", "needs_callback", "escalated", "unresolved"],
+    "confidence": ["high", "low"],
+}
+UNSET = "—"
+
+
+def gt_get(obj, path):
+    """Reads a possibly-dotted field path out of a model output."""
+    cur = obj
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def gt_norm(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return None if v is None else str(v)
+
+
+if st.session_state.transcript:
+    with st.expander("Your reading of this call (optional) — used to score the models", expanded=False):
+        st.caption("Write what you know actually happened, especially who was speaking. "
+                   "Set only the fields you are sure about; blank ones are skipped when scoring.")
+
+        st.session_state.gt_notes = st.text_area(
+            "What actually happened", value=st.session_state.get("gt_notes", ""), height=90,
+            placeholder="e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. "
+                        "The rep is in training and will come Monday to swap the stock.",
+            key="gt_notes_box")
+
+        gt = st.session_state.setdefault("gt_fields", {})
+        cols = st.columns(3)
+        for i, (field, options) in enumerate(GT_FIELDS.items()):
+            with cols[i % 3]:
+                current = gt.get(field, UNSET)
+                choice = st.selectbox(
+                    field, [UNSET] + options,
+                    index=([UNSET] + options).index(current) if current in options else 0,
+                    key=f"gt_{field}")
+                if choice == UNSET:
+                    gt.pop(field, None)
+                else:
+                    gt[field] = choice
+
+        n_set = len(gt)
+        if n_set:
+            st.success(f"{n_set} field(s) set — models will be scored against these after each run.")
+            if st.button("Clear my reading"):
+                st.session_state.gt_fields = {}
+                st.session_state.gt_notes = ""
+                st.rerun()
+        else:
+            st.caption("Nothing set yet — scoring is skipped.")
+
 st.subheader("3 · System instruction and schema")
 
 tab_sys, tab_schema = st.tabs(["System instruction", "Structured output"])
@@ -847,6 +919,33 @@ if st.session_state.results:
 
     labels = list(st.session_state.results.keys())
     ok = {k: v for k, v in st.session_state.results.items() if v["parsed"]}
+
+    # ---- scorecard against your reading ----
+    gt = st.session_state.get("gt_fields", {})
+    if gt and ok:
+        st.markdown("**Scored against your reading**")
+        rows, totals = [], {}
+        for field, expected in gt.items():
+            row = {"Field": field, "You": expected}
+            for label, v in ok.items():
+                out = v["cleaned"] if (clean_output and v["cleaned"]) else v["parsed"]
+                got = gt_norm(gt_get(out, field))
+                hit = (got == expected)
+                totals[label] = totals.get(label, 0) + (1 if hit else 0)
+                row[label] = f"{'✓' if hit else '✗'} {got if got is not None else 'null'}"
+            rows.append(row)
+
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        score_cols = st.columns(len(totals))
+        for col, (label, hits) in zip(score_cols, totals.items()):
+            pct = round(100 * hits / len(gt))
+            col.metric(label, f"{hits}/{len(gt)}", f"{pct}%")
+
+        if st.session_state.get("gt_notes"):
+            st.caption("Your note: " + st.session_state["gt_notes"])
+        st.divider()
+
     failed = {k: v for k, v in st.session_state.results.items() if not v["parsed"]}
 
     # ---- summary strip: one metric card per model ----
@@ -1022,6 +1121,10 @@ def build_full_export():
             "diarized": ss.get("diarized_text"),
             "sarvam_raw": ss.get("stt_raw"),
         },
+        "my_reading": {
+            "notes": ss.get("gt_notes", ""),
+            "fields": ss.get("gt_fields", {}),
+        },
         "results": {
             k: {kk: vv for kk, vv in v.items() if kk != "raw_text"}
             for k, v in ss.get("results", {}).items()
@@ -1067,6 +1170,11 @@ with ec2:
                     st.session_state.diarized_text = tr["diarized"]
                 if tr.get("sent_to_models"):
                     st.session_state.active_transcript = tr["sent_to_models"]
+                mr = data.get("my_reading") or {}
+                if mr.get("fields"):
+                    st.session_state.gt_fields = mr["fields"]
+                if mr.get("notes"):
+                    st.session_state.gt_notes = mr["notes"]
                 st.session_state.stt_language = (
                     data.get("transcription", {}).get("language_code_detected") or "")
                 st.session_state.language_probability = (
