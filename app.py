@@ -253,6 +253,24 @@ def sarvam_batch(files, key, mode, language_code, diarize, num_speakers, progres
         return payloads, failures
 
 
+def force_always_write(schema, field, extra_rule):
+    """Returns a copy of the schema with one field made non-nullable, for testing what a
+    model writes when it cannot opt out. The saved schema file is untouched."""
+    if not isinstance(schema, dict):
+        return schema
+    s = json.loads(json.dumps(schema))
+    node = (s.get("properties") or {}).get(field)
+    if not isinstance(node, dict):
+        return s
+    node.pop("nullable", None)
+    if isinstance(node.get("enum"), list):
+        node["enum"] = [e for e in node["enum"] if e is not None]
+    node["description"] = extra_rule
+    if field not in s.get("required", []):
+        s.setdefault("required", []).append(field)
+    return s
+
+
 def audit_schema(schema):
     """Flags constructs that behave badly with schema-constrained decoding."""
     problems = []
@@ -666,7 +684,43 @@ if st.session_state.transcript:
 # Your reading of the call — ground truth for scoring
 # ----------------------------------------------------------------------------
 
-GT_FIELDS = {
+DEFAULT_GT_FIELDS = [
+    "call_category", "call_type", "urgency", "appointment.action",
+    "clinic_told_caller_to_come", "price_asked", "price_quoted", "outcome", "confidence",
+]
+
+
+def gt_options_from_schema(schema):
+    """Builds the scoreable field list from the loaded schema: every enum, boolean and
+    simple string becomes a field you can set. Lists and long prose are skipped."""
+    out = {}
+    if not isinstance(schema, dict):
+        return out
+
+    def walk(props, prefix=""):
+        for name, node in (props or {}).items():
+            if not isinstance(node, dict):
+                continue
+            path = f"{prefix}{name}"
+            t = node.get("type")
+            if t == "object":
+                walk(node.get("properties", {}), path + ".")
+            elif t == "array":
+                continue                                  # lists are not scored
+            elif node.get("enum"):
+                out[path] = [e for e in node["enum"] if e is not None]
+            elif t == "boolean":
+                out[path] = ["true", "false"]
+            elif t == "string":
+                if name in ("one_line_summary", "detailed_summary", "speaker_roles"):
+                    continue                              # prose, not scoreable
+                out[path] = None                          # free text
+
+    walk(schema.get("properties", {}))
+    return out
+
+
+FALLBACK_GT_FIELDS = {
     "call_category": ["patient_call", "clinical_consultation", "operations_call", "non_patient_call"],
     "call_type": ["appointment_booking", "reschedule", "cancellation", "procedure_inquiry",
                   "prescription_refill", "dosage_adjustment", "report_status", "test_results",
@@ -680,6 +734,7 @@ GT_FIELDS = {
     "outcome": ["resolved", "pending_action", "needs_callback", "escalated", "unresolved"],
     "confidence": ["high", "low"],
 }
+
 UNSET = "—"
 
 
@@ -789,13 +844,59 @@ else:
                    "was really agreed. Then let the system work out the expected field values — you review "
                    "them before anything is scored.")
 
-        notes = st.text_area(
-            "What actually happened", height=110,
-            placeholder="e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. The rep is away at "
-                        "training and will come Monday or Tuesday to swap 10mg stock for 5mg. No patient "
-                        "involved. Audio is poor in places.",
-            key="gt_notes_box")
-        st.session_state.gt_notes = notes
+        vc1, vc2 = st.columns([2, 1])
+        with vc2:
+            st.caption("Or say it out loud")
+            note_audio = None
+            if hasattr(st, "audio_input"):
+                note_audio = st.audio_input("Record your account", key="gt_audio")
+            else:
+                note_audio = st.file_uploader("Upload a voice note",
+                                              type=["wav", "mp3", "m4a", "ogg", "webm"], key="gt_audio_file")
+
+            if note_audio is not None:
+                if st.button("Transcribe my note"):
+                    if not sarvam_key:
+                        st.error("Add your Sarvam key in the sidebar first.")
+                    else:
+                        with st.spinner("Transcribing your note"):
+                            try:
+                                raw = note_audio.getvalue()
+                                name = getattr(note_audio, "name", "note.wav")
+                                if len(raw) > 900_000:
+                                    st.info("Long note — using the batch API, this takes a minute.")
+                                    payloads, failures = sarvam_batch(
+                                        [note_audio], sarvam_key, "translate", "unknown", False, 2,
+                                        lambda m: None)
+                                    spoken = payloads[0].get("transcript", "") if payloads else ""
+                                    if failures:
+                                        st.warning("; ".join(failures))
+                                else:
+                                    spoken = sarvam_rest(raw, name, sarvam_key,
+                                                         "translate", "unknown").get("transcript", "")
+                                if not spoken.strip():
+                                    st.warning("Nothing came back — try recording again.")
+                                else:
+                                    existing = st.session_state.get("gt_notes_box", "")
+                                    st.session_state["gt_notes_box"] = (
+                                        (existing.rstrip() + "\n" + spoken) if existing.strip() else spoken)
+                                    st.session_state.gt_notes = st.session_state["gt_notes_box"]
+                                    st.rerun()
+                            except requests.HTTPError as e:
+                                st.error(f"Sarvam refused: {e.response.status_code} — "
+                                         f"{e.response.text[:250]}")
+                            except Exception as e:
+                                st.error(str(e))
+
+        with vc1:
+            notes = st.text_area(
+                "What actually happened", height=150,
+                placeholder="Type here, or record on the right and it lands in this box.\n\n"
+                            "e.g. Speaker 0 is the receptionist, speaker 1 is the pharma rep. The rep is away "
+                            "at training and will come Monday or Tuesday to swap 10mg stock for 5mg. "
+                            "No patient involved. Audio is poor in places.",
+                key="gt_notes_box")
+            st.session_state.gt_notes = notes
 
         dc1, dc2 = st.columns([1, 2])
         derive = dc1.button("Work out the expected fields", type="primary",
@@ -825,19 +926,51 @@ else:
             if st.session_state.get("gt_reasoning"):
                 st.caption(st.session_state["gt_reasoning"])
 
-        st.markdown("**Expected values** — edit any of these; blank means do not score that field")
+        # fields available to score come from the loaded schema, falling back to the core set
+        try:
+            loaded_schema = json.loads(st.session_state.get("schema_text", "") or "{}")
+        except json.JSONDecodeError:
+            loaded_schema = {}
+        available = gt_options_from_schema(loaded_schema) or dict(FALLBACK_GT_FIELDS)
+
+        st.markdown("**Expected values** — blank means that field is not scored")
+        chosen_fields = st.multiselect(
+            "Fields to score",
+            sorted(available.keys()),
+            default=[f for f in (list(gt.keys()) or DEFAULT_GT_FIELDS) if f in available],
+            help="Every field in your loaded schema is available. Add or remove as you like.")
+
+        for f in list(gt.keys()):
+            if f not in chosen_fields:
+                gt.pop(f, None)
+
         cols = st.columns(3)
-        for i, (field, options) in enumerate(GT_FIELDS.items()):
+        rev = st.session_state.get("gt_rev", 0)
+        for i, field in enumerate(chosen_fields):
+            options = available.get(field)
             with cols[i % 3]:
-                current = gt.get(field, UNSET)
-                choice = st.selectbox(
-                    field, [UNSET] + options,
-                    index=([UNSET] + options).index(current) if current in options else 0,
-                    key=f"gt_{field}_{st.session_state.get('gt_rev', 0)}")
-                if choice == UNSET:
-                    gt.pop(field, None)
+                if options:
+                    current = gt.get(field, UNSET)
+                    choice = st.selectbox(
+                        field, [UNSET] + options,
+                        index=([UNSET] + options).index(current) if current in options else 0,
+                        key=f"gt_{field}_{rev}")
+                    if choice == UNSET:
+                        gt.pop(field, None)
+                    else:
+                        gt[field] = choice
                 else:
-                    gt[field] = choice
+                    typed = st.text_input(field, value=gt.get(field, ""),
+                                          placeholder="leave blank to skip",
+                                          key=f"gtx_{field}_{rev}")
+                    if typed.strip():
+                        gt[field] = typed.strip()
+                    else:
+                        gt.pop(field, None)
+
+        if not loaded_schema:
+            st.caption("No schema loaded, so this is the core field set. Load your schema in step 3 "
+                       "and every field in it becomes available here.")
 
         if gt:
             if st.button("Clear my reading"):
@@ -845,7 +978,7 @@ else:
                 st.session_state["gt_notes_box"] = ""
                 st.session_state.gt_notes = ""
                 st.session_state.gt_reasoning = ""
-                st.session_state.gt_rev = st.session_state.get("gt_rev", 0) + 1
+                st.session_state.gt_rev = rev + 1
                 st.rerun()
         else:
             st.caption("Nothing set yet — scoring is skipped.")
@@ -884,6 +1017,14 @@ with tab_schema:
     use_schema = st.toggle("Enforce structured output", value=bool(st.session_state.get("schema_text")))
     st.caption("Gemini receives this as responseSchema; Claude as a forced tool call. "
                "The decoder itself is constrained, so field names and enums cannot drift.")
+
+    force_summary = st.toggle(
+        "Always require detailed_summary (testing)",
+        value=False,
+        help="Removes the null option so every model must write one. Useful for comparing how each "
+             "model summarises. Your schema file is not changed.")
+    if force_summary:
+        st.caption("detailed_summary cannot be null on this run — compare what each model writes.")
 
     kc1, kc2 = st.columns([3, 1])
     with kc2:
@@ -939,6 +1080,14 @@ with tab_schema:
 
             if use_schema:
                 active_schema = parsed_schema
+                if force_summary:
+                    active_schema = force_always_write(
+                        active_schema, "detailed_summary",
+                        "Write this on EVERY call. Never null, never empty. Two to four sentences built "
+                        "from the fields you extracted, in simple English, keeping names and medicine names "
+                        "as spoken. Never copied from the transcript. State what each side said, asked or "
+                        "agreed - do not invent causes, sequence or motives. If the call was routine, still "
+                        "write two sentences saying plainly what happened.")
             else:
                 st.info("Parsed but not enforced — turn on the toggle above.")
         except json.JSONDecodeError as e:
@@ -1198,6 +1347,7 @@ if st.session_state.results:
         json.dumps({
             "prompt_version": prompt_version, "temperature": temperature,
             "schema_enforced": bool(active_schema),
+            "forced_detailed_summary": bool(force_summary),
             "stt_language": st.session_state.stt_language,
             "transcript": active_tx,
             "diarized": bool(st.session_state.get("diarized_text")) and active_tx == st.session_state.get("diarized_text"),
@@ -1261,6 +1411,7 @@ def build_full_export():
             "temperature": temperature,
             "force_json": force_json,
             "schema_enforced": bool(active_schema),
+            "forced_detailed_summary": bool(force_summary),
             "show_cleaned_output": clean_output,
             "models_selected": chosen,
             "pricing_per_million_tokens": {k: {"in": v[0], "out": v[1]} for k, v in pricing.items()},
