@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.4</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.5</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
@@ -1174,6 +1174,7 @@ function vPipe(){
       +(function(){const ppl=S.people.filter(p=>p.clinic===c.name&&!(c.doctors||[]).some(d=>nameEq(p.name,d)));return ppl.length?'<div class="m" style="margin-top:6px">'+ppl.map(p=>'<span class="pill grey">'+esc(p.role.split(' /')[0])+'</span> '+esc(p.name)).join('\n')+'</div>':'';})()
       +'</div><div class="acts">'
       +'<button class="pri" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
+      +'<button onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
       +'<button onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
       +'<button onclick="editClinic(\''+c.id+'\')">Edit</button>'
       +'</div></div></div>';
@@ -1199,7 +1200,7 @@ function vPeople(){
     +(p.notes?'<div class="m">'+esc(p.notes)+'</div>':'')
     +(fus.length?'<div class="m" style="margin-top:6px">'+fus.map(f=>'<span class="pill amber">follow-up</span> '+esc(f.text)+' \u00b7 '+duePill(f.due)).join('\n')+'</div>':'')
     +(function(){const ts=[...S.sequence,...S.me.sequence].filter(t=>!t.done&&t.link===p.name);return ts.length?'<div class="m" style="margin-top:6px">'+ts.map(t=>'<span class="pill">task</span> '+esc(t.title)).join('\n')+'</div>':'';})()
-    +'</div><div class="acts"><button onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button><button onclick="editPerson(\''+p.id+'\')">Edit</button></div></div></div>';
+    +'</div><div class="acts"><button onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button><button onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button><button onclick="editPerson(\''+p.id+'\')">Edit</button></div></div></div>';
   }).join('');
   return h;
 }
@@ -1221,6 +1222,7 @@ function vClinicDetail(){
     [c.city,c.phone?'☎ reception '+esc(c.phone):'',c.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
+    +'<button class="btn sm sec" onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="editClinic(\''+c.id+'\')">Edit</button></div>';
   h+='<h2>People here</h2>';
@@ -1252,6 +1254,7 @@ function vPersonDetail(){
     [p.city,p.phone?'📱 personal '+esc(p.phone):'',p.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button>'
+    +'<button class="btn sm sec" onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="editPerson(\''+p.id+'\')">Edit</button></div>';
   h+='<h2>Clinics</h2>';
   h+=[...clinicSet].map(n=>'<div class="item"><div class="t">'+nameLink(n)+'</div></div>').join('')||'<div class="empty">Not linked to a clinic yet.</div>';
@@ -1708,6 +1711,19 @@ function icsFU(id,sp){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='reminder.ics';a.click();URL.revokeObjectURL(a.href);
   toast('Open the file \u2192 it lands in your calendar with a 30-min alert');
 }
+function addTaskFor(id,kind){
+  const o=kind==='clinic'?S.clinics.find(c=>c.id===id):S.people.find(p=>p.id===id);
+  if(!o)return;
+  openModal('Task — '+o.name,[
+    {key:'title',label:'What needs doing?',value:''},
+    {key:'bucket',label:'Bucket',type:'select',options:['now','queued','parked'],value:'queued'},
+    {key:'notes',label:'Notes (optional)',type:'textarea',value:''}
+  ],v=>{
+    if(!v.title)return;
+    S.sequence.push({id:uid(),title:cleanEntry(v.title,false)||v.title,bucket:v.bucket,trigger:'',notes:v.notes,link:o.name,done:false,created:todayISO()});
+    save();render();toast('Task added → '+o.name+' ✓');
+  },null,'Add task');
+}
 function addFUfor(id,kind){
   const o=kind==='clinic'?S.clinics.find(c=>c.id===id):S.people.find(p=>p.id===id);
   openModal('Follow-up \u2014 '+(o?o.name:''),[
@@ -1911,7 +1927,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='7.4';
+const APP_VERSION='7.5';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
