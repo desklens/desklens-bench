@@ -1,0 +1,16 @@
+{
+  "name": "DeskLens HQ",
+  "short_name": "DeskLens HQ",
+  "description": "Vinay's command center for DeskLens — pipeline, people, follow-ups and personal world.",
+  "start_url": "./desklens-hq.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#FAF9F5",
+  "theme_color": "#1D5B53",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
