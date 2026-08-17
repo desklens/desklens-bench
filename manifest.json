@@ -2,7 +2,7 @@
   "name": "DeskLens HQ",
   "short_name": "DeskLens HQ",
   "description": "Vinay's command center for DeskLens — pipeline, people, follow-ups and personal world.",
-  "start_url": "./desklens-hq.html",
+  "start_url": "./?v=74",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
