@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.2</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.3</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
@@ -1413,6 +1413,7 @@ function vData(){
     +'</div></div>';
   h+='<h2>About</h2><div class="card"><p style="font-size:13.5px;line-height:1.65;color:var(--muted)">DeskLens HQ v6.3 \u2014 Vinay\u2019s command center. Clickable detail pages for every clinic & person. Clean extraction everywhere. Voice-first capture with AI. Pilot Mode. Follow-up engine across both worlds. Two spaces: DeskLens (Sequence \u00b7 Pipeline with visits & 3\u21928\u219215\u2192400 gates \u00b7 People \u00b7 Insights \u00b7 Decisions \u00b7 Weekly Review) and My World (Tasks & routines \u00b7 Goals with check-ins \u00b7 Journal). Voice-first capture with Smart Dump: speak a stream, I bucket it, you confirm. One backup covers both spaces. Next: Firebase auto-sync once daily use has earned it.</p></div>';
   if(space==='dl')h+='<h2>Mode</h2><div class="card"><span class="subtle">Currently: <b>'+(S.meta.pilotMode?'Pilot Mode (lean)':'Full Mode')+'</b></span><br><button class="btn sec sm" style="margin-top:8px" onclick="setPilot('+(!S.meta.pilotMode)+')">'+(S.meta.pilotMode?'Switch to Full Mode':'Switch to Pilot Mode')+'</button></div>';
+  h+='<h2>App version</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Running <b>v'+APP_VERSION+'</b>. If a device is stuck on an old version, tap below — it clears the offline cache and reloads the newest build. Your data is not affected.</p><button class="btn sm sec" onclick="forceUpdate()">Force update now</button></div>';
   h+='<h2>Danger zone</h2><div class="card"><button class="btn sec" style="color:var(--red);border-color:var(--red)" onclick="resetAll()">Reset to seed data</button></div>';
   return h;
 }
@@ -1908,6 +1909,36 @@ $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',da
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 render();
 if(fbCfg())initSync(true);
+setTimeout(()=>checkUpdate(),2500);
+/* Self-update: detect a newer version on the server and offer one-tap refresh */
+const APP_VERSION='7.3';
+async function checkUpdate(){
+  if(!location.protocol.startsWith('http'))return;
+  try{
+    const r=await fetch(location.pathname+'?v='+Date.now(),{cache:'no-store'});
+    const t=await r.text();
+    const m=t.match(/const APP_VERSION='([\d.]+)'/);
+    if(m&&m[1]!==APP_VERSION){
+      const b=document.createElement('div');
+      b.style.cssText='position:fixed;left:0;right:0;bottom:0;background:var(--teal);color:#fff;padding:calc(12px + env(safe-area-inset-bottom)) 16px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;z-index:400;font-size:14px';
+      b.innerHTML='<span>Version '+m[1]+' is available</span><button class="btn" style="background:#fff;color:var(--teal-dark);padding:8px 14px" onclick="forceUpdate()">Update now</button>';
+      document.body.appendChild(b);
+    }
+  }catch(e){}
+}
+async function forceUpdate(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+    if(window.caches){
+      const ks=await caches.keys();
+      await Promise.all(ks.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  location.replace(location.pathname+'?u='+Date.now());
+}
 /* PWA: install as a real app on Android/desktop */
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')){
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
