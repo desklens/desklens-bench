@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>DeskLens HQ — Vinay's Command Center</title>
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#1D5B53">
@@ -24,10 +24,10 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth}
-body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--sand);color:var(--ink);min-height:100vh;padding-bottom:110px}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--sand);color:var(--ink);min-height:100vh;padding-bottom:calc(110px + env(safe-area-inset-bottom));-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
 h2,.logo,.rhead,.modal h3{font-family:'Newsreader',Georgia,serif}
 .stat .v{font-family:'IBM Plex Mono',monospace}
-header{background:var(--teal-dark);color:#fff;padding:14px 16px 0;position:sticky;top:0;z-index:50;box-shadow:0 2px 12px rgba(11,79,74,.25)}
+header{background:var(--teal-dark);color:#fff;padding:calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));position:sticky;top:0;z-index:50;box-shadow:0 2px 12px rgba(11,79,74,.25)}
 .hrow{display:flex;align-items:center;justify-content:space-between;max-width:1100px;margin:0 auto}
 .logo{font-weight:700;font-size:19px;letter-spacing:.2px}
 .logo span{opacity:.65;font-weight:400}
@@ -36,7 +36,7 @@ nav{display:flex;gap:2px;overflow-x:auto;max-width:1100px;margin:10px auto 0;-we
 nav::-webkit-scrollbar{display:none}
 nav button{flex-shrink:0;background:none;border:none;color:#fff;opacity:.6;font-family:inherit;font-size:14px;font-weight:600;padding:10px 13px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:opacity .15s}
 nav button.active{opacity:1;border-bottom-color:#fff}
-main{max-width:1100px;margin:0 auto;padding:16px;animation:fadein .25s ease}
+main{max-width:1100px;margin:0 auto;padding:16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));animation:fadein .25s ease}
 @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 h2{font-size:19px;font-weight:600;margin:20px 0 10px;display:flex;align-items:center;gap:8px}
 .greet{font-family:'Newsreader',Georgia,serif;font-size:24px;font-weight:600;margin-bottom:2px}
@@ -85,7 +85,7 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 .empty{color:var(--muted);font-size:13px;padding:18px;text-align:center;border:1.5px dashed var(--line);border-radius:var(--r)}
 .overlay{position:fixed;inset:0;background:rgba(28,25,23,.45);display:none;align-items:flex-end;justify-content:center;z-index:100}
 .overlay.open{display:flex}
-.modal{background:var(--card);border-radius:20px 20px 0 0;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:20px 18px 30px;animation:slideup .22s ease}
+.modal{background:var(--card);border-radius:20px 20px 0 0;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:20px 18px calc(30px + env(safe-area-inset-bottom));animation:slideup .22s ease;-webkit-overflow-scrolling:touch}
 @keyframes slideup{from{transform:translateY(40px);opacity:.6}to{transform:none;opacity:1}}
 @media(min-width:640px){.overlay{align-items:center}.modal{border-radius:20px}}
 .modal h3{font-size:17px;margin-bottom:14px}
@@ -98,7 +98,7 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 .mbtns .btn{flex:1}
 .note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}
 .dleft{border-left:4px solid var(--teal);padding-left:12px}
-.toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:11px;font-size:13.5px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:200}
+.toast{position:fixed;bottom:calc(96px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:11px;font-size:13.5px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:200}
 .toast.show{opacity:1}
 .hl{border-radius:var(--r);padding:11px 14px;font-size:13px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;line-height:1.45}
 .hl .dot{width:8px;height:8px;border-radius:99px;margin-top:5px;flex-shrink:0}
@@ -112,8 +112,17 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 .subtle{font-size:12px;color:var(--muted)}
 .dropover{outline:2px dashed var(--teal);outline-offset:5px;border-radius:var(--r)}
 .dropbefore{box-shadow:0 -3px 0 0 var(--teal),var(--sh)!important}
+/* native-app feel */
+.f input,.f select,.f textarea,.qadd input{font-size:16px}
+button,a,.item{-webkit-touch-callout:none}
+.item .t,.sqt,nav button,.chips button,.filterrow button{user-select:none;-webkit-user-select:none}
+@media(display-mode:standalone){body{overscroll-behavior:none}}
 @media(max-width:640px){
-  main{padding:12px}
+  main{padding:12px calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left))}
+  .modal{max-height:92vh}
+  .acts button{padding:7px 12px;font-size:12.5px}
+  .sqa button{padding:5px 10px;font-size:12px}
+  .fab{width:62px;height:62px;font-size:32px}
   .irow{flex-wrap:wrap}
   .acts{width:100%;justify-content:flex-end;margin-top:8px}
   .sqa{justify-content:flex-end;margin-top:6px}
@@ -132,7 +141,7 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 .sqa{gap:4px}
 .sqa button{padding:3px 8px;font-size:11px;border-radius:7px}
 .sqhint{font-size:11px;color:var(--muted);cursor:pointer}
-.fab{position:fixed;right:18px;bottom:24px;width:58px;height:58px;border-radius:99px;background:var(--teal);color:#fff;border:none;font-size:30px;font-weight:400;cursor:pointer;box-shadow:0 6px 20px rgba(15,118,110,.4);z-index:90;transition:transform .12s;line-height:1;font-family:inherit}
+.fab{position:fixed;right:calc(18px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:99px;background:var(--teal);color:#fff;border:none;font-size:30px;font-weight:400;cursor:pointer;box-shadow:0 6px 20px rgba(15,118,110,.4);z-index:90;transition:transform .12s;line-height:1;font-family:inherit}
 .fab:active{transform:scale(.92)}
 .chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
 .chips button{background:#F4EFE5;border:1.5px solid transparent;border-radius:99px;font-size:13px;font-weight:600;padding:7px 14px;cursor:pointer;font-family:inherit;color:var(--muted);transition:all .15s}
@@ -177,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.1</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.2</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
