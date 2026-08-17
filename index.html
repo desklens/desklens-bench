@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.3</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.4</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
@@ -1911,7 +1911,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='7.3';
+const APP_VERSION='7.4';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
@@ -1940,8 +1940,15 @@ async function forceUpdate(){
   location.replace(location.pathname+'?u='+Date.now());
 }
 /* PWA: install as a real app on Android/desktop */
+const IS_IOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')){
-  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  if(IS_IOS){
+    /* iOS caches too aggressively and strands old builds — run cache-free there, always fresh */
+    navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
+    if(window.caches)caches.keys().then(ks=>ks.forEach(k=>caches.delete(k))).catch(()=>{});
+  }else{
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
 }
 let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;if(tab==='data')render();});
