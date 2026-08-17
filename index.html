@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>DeskLens HQ — Vinay's Command Center</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#1D5B53">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DeskLens HQ">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
@@ -170,7 +177,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.0</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.1</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
@@ -1343,7 +1350,14 @@ function vDec(){
 function vData(){
   const size=(localStorage.getItem(LS_KEY)||'').length;
   const cfg=fbCfg();
-  let h='<h2>Cloud sync — laptop ↔ phone</h2><div class="card">';
+  const installed=window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches;
+  let h='';
+  if(!installed&&location.protocol.startsWith('http')){
+    h+='<h2>Install as an app</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Get a real app icon, fullscreen, works offline.</p>'
+      +'<button class="btn sm" onclick="installApp()">Install DeskLens HQ</button>'
+      +'<div class="note">No prompt? Chrome ⋮ menu → “Install app” / “Add to Home screen”.</div></div>';
+  }
+  h+='<h2>Cloud sync — laptop ↔ phone</h2><div class="card">';
   if(!cfg){
     h+='<p style="font-size:13.5px;line-height:1.6">Paste your Firebase config (Project settings → Your apps → the <b>{ ... }</b> block). Your data syncs live between devices; only your signed-in account can read it.</p>'
       +'<div class="f" style="margin-top:10px"><label>Firebase config</label><textarea id="fbcfg" placeholder="const firebaseConfig = { apiKey: ... }" style="min-height:110px;font-family:ui-monospace,monospace;font-size:12px"></textarea></div>'
@@ -1885,6 +1899,16 @@ $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',da
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 render();
 if(fbCfg())initSync(true);
+/* PWA: install as a real app on Android/desktop */
+if('serviceWorker' in navigator&&location.protocol.startsWith('http')){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;if(tab==='data')render();});
+async function installApp(){
+  if(!deferredPrompt){alert('If no prompt appears: open Chrome’s ⋮ menu → “Add to Home screen” / “Install app”.');return;}
+  deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;render();
+}
 </script>
 </body>
 </html>
