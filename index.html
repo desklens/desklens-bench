@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.5</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.6</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -765,7 +765,17 @@ function openForm(kind,pre){
   form={kind,vals:Object.assign(d.init(),pre||{})};
   renderForm();
 }
+function formReadDOM(){
+  if(!form)return;
+  FORM_DEFS[form.kind].fields.forEach(f=>{
+    const el=$('ff_'+f.k);
+    if(el)form.vals[f.k]=el.value;
+  });
+}
 function renderForm(){
+  formReadDOM();
+  const focusId=document.activeElement&&document.activeElement.id;
+  const selStart=document.activeElement&&document.activeElement.selectionStart;
   const d=FORM_DEFS[form.kind],v=form.vals;
   const rows=d.fields.map(f=>{
     if(f.t==='chips'||f.t==='people'){
@@ -787,15 +797,21 @@ function renderForm(){
     +rows
     +'<div class="mbtns"><button class="btn sec" onclick="closeModal();form=null">Cancel</button><button class="btn" onclick="formSave()">Save ✓</button></div>';
   $('overlay').classList.add('open');
+  if(focusId&&$(focusId)){
+    const el=$(focusId);el.focus();
+    try{if(selStart!=null)el.setSelectionRange(selStart,selStart);}catch(e){}
+  }
 }
-function formSet(k,val){form.vals[k]=val;renderForm();}
+function formSet(k,val){formReadDOM();form.vals[k]=val;renderForm();}
 function formNew(k,kind){
+  formReadDOM();
   const val=prompt('Add a new '+(kind||k)+':');
   if(!val||!val.trim())return;
   form.vals[k]=kind?addCustom(kind,val):val.trim();
   renderForm();
 }
 function formVoice(){
+  formReadDOM();
   const eg=form.kind==='clinic'
     ?'e.g. “Apex Dental, Dr Shetgar, dentistry, Kalaburagi, Samsung phone, 200 reviews, receptionist Shalini 9876543210”'
     :'e.g. “Dr Ramesh Kulkarni, orthopaedics, Bidar, 9876543210, met through Dr Shetgar, very influential”';
@@ -873,8 +889,13 @@ async function aiFillForm(txt,kind){
   return JSON.parse(j.candidates[0].content.parts[0].text);
 }
 function formSave(){
+  formReadDOM();
   const v=form.vals,kind=form.kind;
-  if(!v.name||!v.name.trim()){toast('Name is needed');return;}
+  if(!v.name||!v.name.trim()){
+    toast('Name is needed');
+    const el=$('ff_name');if(el){el.focus();el.style.borderColor='var(--red)';}
+    return;
+  }
   if(kind==='clinic'){
     lastCity=v.city||lastCity;
     let c=S.clinics.find(x=>nameEq(x.name,v.name));
@@ -2857,7 +2878,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='8.5';
+const APP_VERSION='8.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
