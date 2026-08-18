@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.2</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.3</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -325,6 +325,7 @@ function optList(kind){
 }
 function addCustom(kind,val){
   val=(val||'').trim();if(!val)return '';
+  val=val.replace(/\b[a-z]/g,c=>c.toUpperCase()).replace(/\bOf\b|\bAnd\b|\bThe\b/g,m=>m.toLowerCase());
   if(!S.meta.custom)S.meta.custom={};
   const cur=S.meta.custom[kind]||[];
   if(!baseList(kind).some(x=>x.toLowerCase()===val.toLowerCase())&&!cur.some(x=>x.toLowerCase()===val.toLowerCase())){
@@ -860,18 +861,43 @@ function formVoice(){
     ?'“Unicare Diagnostic Center, diagnostics, Kalaburagi, Dr Sushil Guttedar, Samsung phone, 320 reviews, receptionist Shalini nine eight seven six five four three two one zero”'
     : '“Dr Ramesh Kulkarni, orthopaedics, Bidar, nine eight seven six five four three two one zero, met through Dr Shetgar, high influence”';
   const d=FORM_DEFS[form.kind];
-  const checklist=d.fields.map(f=>{
-    const done=!!form.vals[f.k];
-    return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:13px;'+(done?'opacity:.5':'')+'">'
-      +'<span style="color:'+(done?'var(--green)':'var(--muted)')+'">'+(done?'✓':'•')+'</span>'
-      +'<span><b>'+esc(f.l)+'</b>'+(done?' — '+esc(form.vals[f.k]):'')+'</span></div>';
-  }).join('');
-  $('modal').innerHTML='<h3>Speak once — I’ll fill every field</h3>'
-    +'<div class="note" style="margin-bottom:8px">Say each field by name, in any order — e.g. <i>“clinic name Unicare Diagnostic Center, doctor Sushil Guttedar, specialty diagnostics…”</i>. Skip anything you don’t know.</div>'
-    +'<div class="card" style="margin-bottom:10px;padding:12px"><div class="subtle" style="margin-bottom:4px">Say these:</div>'+checklist+'</div>'
-    +'<div class="f"><textarea id="vfx" style="min-height:130px" placeholder="Tap here, then hit your keyboard mic and speak — or type."></textarea></div>'
+  const order=d.fields.map((f,i)=>'<span style="white-space:nowrap"><b style="color:var(--teal)">'+(i+1)+'.</b> '+esc(f.l)+(form.vals[f.k]?' <span style="color:var(--green)">✓</span>':'')+'</span>').join(' <span style="color:var(--muted)">,</span> ');
+  $('modal').innerHTML='<h3>Say the values in this order</h3>'
+    +'<div class="card" style="margin-bottom:10px;padding:12px;line-height:2">'
+      +'<div class="subtle" style="margin-bottom:6px">Say these, separated by commas — say <b>skip</b> for anything you don’t have:</div>'
+      +'<div style="font-size:13px">'+order+'</div>'
+    +'</div>'
+    +'<div class="f"><textarea id="vfx" style="min-height:120px" placeholder="'+esc(form.kind==='clinic'?'Unicare Diagnostic Center, Dr Sushil Guttedar, diagnostics, Kalaburagi, lead, cold visit, skip, 320, Shalini, skip, Samsung, unverified, reputed doctor':'Dr Meena Patil, 9812345670, doctor, dermatology, skip, Bidar, referral, high, warm, met at IMA')+'"></textarea></div>'
+    +'<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:4px"><input type="checkbox" id="vpos" checked> Values are in field order (uncheck if you’re speaking freely)</label>'
     +'<div class="mbtns"><button class="btn sec" onclick="renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
   setTimeout(()=>{const t=$('vfx');if(t)t.focus();},60);
+}
+function positionalFill(txt){
+  const d=FORM_DEFS[form.kind];
+  const parts=txt.split(/[,;\n]/).map(x=>x.trim());
+  const skip=v=>!v||/^(skip|none|na|n\/a|-|nil|no)$/i.test(v);
+  parts.forEach((val,i)=>{
+    const f=d.fields[i];
+    if(!f||skip(val))return;
+    if(f.t==='chips'||f.t==='people'){
+      const list=f.kind?optList(f.kind):(f.opts?f.opts():[]);
+      const lo=val.toLowerCase();
+      const m=list.find(o=>o.toLowerCase()===lo)                          // exact
+        ||list.find(o=>o.toLowerCase().startsWith(lo))                    // "high" → "High — can open doors"
+        ||list.find(o=>o.split(/[—/(]/)[0].trim().toLowerCase()===lo)     // "diagnostics" → "Diagnostics / Pathology"
+        ||list.find(o=>lo.startsWith(o.toLowerCase()))                    // "samsung galaxy" → "Samsung"
+        ||bestMatch(val,list);
+      if(m)form.vals[f.k]=m;
+      else if(f.kind)form.vals[f.k]=addCustom(f.kind,val);                // new option, remembered
+      else form.vals[f.k]=val;                                            // e.g. a new doctor name
+    }else if(f.t==='number'){
+      const n=val.replace(/[^\d]/g,'');if(n)form.vals[f.k]=n;
+    }else if(f.t==='tel'){
+      const n=val.replace(/[^\d]/g,'');if(n.length>=6)form.vals[f.k]=n;
+    }else{
+      form.vals[f.k]=val.charAt(0).toUpperCase()+val.slice(1);
+    }
+  });
 }
 async function toggleRec(){
   if(rec.mr&&rec.mr.state==='recording'){stopRec();return;}
@@ -946,6 +972,12 @@ function formVoiceRun(){
       +'<div class="mbtns"><button class="btn sec" onclick="formVoice()">Say more</button><button class="btn sec" onclick="renderForm()">Edit fields</button><button class="btn" onclick="formSave()">Save ✓</button></div>';
     form._before=before;
   };
+  const positional=$('vpos')&&$('vpos').checked;
+  if(positional&&txt){                       // exact, instant, no AI needed
+    positionalFill(txt);
+    finish('the order you said them in');
+    return;
+  }
   if(S.meta.aiKey){
     $('modal').innerHTML='<h3>'+(audio?'Listening to your recording…':'Reading…')+'</h3><div class="note">Placing each detail in the right field. A few seconds.</div>';
     aiFillForm(txt,form.kind,audio).then(o=>{
@@ -3034,7 +3066,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.2';
+const APP_VERSION='9.3';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
