@@ -24,7 +24,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%;font-size:100%}
-body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--sand);color:var(--ink);min-height:100vh;padding-bottom:calc(110px + env(safe-area-inset-bottom));-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--sand);color:var(--ink);min-height:100vh;padding-bottom:calc(var(--bnav-h,0px) + 96px + env(safe-area-inset-bottom));-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
 h2,.logo,.rhead,.modal h3{font-family:'Newsreader',Georgia,serif}
 .stat .v{font-family:'IBM Plex Mono',monospace}
 header{background:var(--teal-dark);color:#fff;padding:calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));position:sticky;top:0;z-index:50;box-shadow:0 2px 12px rgba(11,79,74,.25)}
@@ -61,7 +61,8 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 .pill.violet{background:var(--violet-soft);color:var(--violet)}
 .item{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;box-shadow:var(--sh);transition:transform .1s}
 .item:active{transform:scale(.995)}
-.item .t{font-weight:600;font-size:14.5px;line-height:1.35}
+.item .t{font-weight:600;font-size:14.5px;line-height:1.35;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.item .t .pill{flex:none}
 .item .m{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.45;white-space:pre-wrap}
 .irow{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .acts{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
@@ -120,9 +121,38 @@ button,a,.item{-webkit-touch-callout:none}
 /* thumb-zone navigation on phones */
 .bnav{display:none}
 .backbar{display:flex;align-items:center;gap:6px;margin-bottom:12px}
+/* user-chosen density — wins over every breakpoint */
+body.dens-compact{font-size:13.5px}
+body.dens-compact h2{font-size:15px;margin:14px 0 6px}
+body.dens-compact .greet{font-size:18px}
+body.dens-compact .greetsub{font-size:11.5px}
+body.dens-compact main{padding:9px}
+body.dens-compact .item{padding:9px 11px;margin-bottom:7px;border-radius:12px}
+body.dens-compact .item .t{font-size:13px}
+body.dens-compact .item .m{font-size:11.5px}
+body.dens-compact .card{padding:10px}
+body.dens-compact .stat .v{font-size:19px}
+body.dens-compact .stat .l{font-size:10.5px}
+body.dens-compact .btn{font-size:13px;padding:9px 12px;min-height:38px}
+body.dens-compact .btn.sm{font-size:11.5px;padding:6px 9px;min-height:32px}
+body.dens-compact .acts button{font-size:11px;padding:6px 9px;min-height:30px}
+body.dens-compact .pill{font-size:9.5px;padding:2px 6px}
+body.dens-compact .bnav button{font-size:9px;min-height:44px}
+body.dens-compact .bnav button .bi{font-size:16px}
+body.dens-compact .hl{font-size:12px;padding:9px 11px}
+body.dens-compact .chips button,body.dens-compact .filterrow button{font-size:11.5px;padding:5px 10px;min-height:32px}
+body.dens-compact .logo{font-size:15px}
+body.dens-roomy{font-size:16.5px}
+body.dens-roomy .item .t{font-size:16px}
+body.dens-roomy .item .m{font-size:14px}
+body.dens-roomy h2{font-size:20px}
+body.dens-roomy .btn{font-size:16px;min-height:48px}
+body.dens-roomy .bnav button{font-size:11.5px;min-height:58px}
 @media(max-width:640px){
   .backbar{position:sticky;top:0;z-index:40;background:var(--sand);padding:8px 0;margin:-4px 0 10px}
 }
+body.nav-top .bnav{display:none!important}
+body.nav-top header nav{display:flex!important}
 @media(max-width:640px){
   header nav{display:none}
   header{padding-bottom:12px}
@@ -140,8 +170,7 @@ button,a,.item{-webkit-touch-callout:none}
   }
   .bnav button .bi{font-size:19px;line-height:1}
   .bnav button.on{color:var(--teal);background:var(--teal-soft)}
-  body{padding-bottom:calc(104px + env(safe-area-inset-bottom))}
-  .fab{bottom:calc(88px + env(safe-area-inset-bottom));width:58px;height:58px;font-size:30px;box-shadow:0 4px 16px rgba(29,91,83,.42)}
+  .fab{width:58px;height:58px;font-size:30px;box-shadow:0 4px 16px rgba(29,91,83,.42)}
   main{padding:12px calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left))}
   .modal{max-height:92vh;border-radius:22px 22px 0 0;padding-top:10px}
   .modal:before{content:'';display:block;width:38px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 12px}
@@ -193,7 +222,6 @@ button,a,.item{-webkit-touch-callout:none}
   .btn{font-size:13.5px;padding:10px 13px;min-height:40px}
   .btn.sm{font-size:12px;padding:7px 10px}
   .logo{font-size:16px}
-  .logo span[style]{display:none}
   .spacesw button{padding:5px 10px;font-size:12px}
   .bnav button{font-size:9.5px;min-height:48px}
   .bnav button .bi{font-size:17px}
@@ -221,7 +249,7 @@ button,a,.item{-webkit-touch-callout:none}
 .sqa{gap:4px}
 .sqa button{padding:3px 8px;font-size:11px;border-radius:7px}
 .sqhint{font-size:11px;color:var(--muted);cursor:pointer}
-.fab{position:fixed;right:calc(18px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:99px;background:var(--teal);color:#fff;border:none;font-size:30px;font-weight:400;cursor:pointer;box-shadow:0 6px 20px rgba(15,118,110,.4);z-index:90;transition:transform .12s;line-height:1;font-family:inherit}
+.fab{position:fixed;right:calc(18px + env(safe-area-inset-right));bottom:calc(var(--bnav-h,0px) + 20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:99px;background:var(--teal);color:#fff;border:none;font-size:30px;font-weight:400;cursor:pointer;box-shadow:0 6px 20px rgba(15,118,110,.4);z-index:90;transition:transform .12s;line-height:1;font-family:inherit}
 .fab:active{transform:scale(.92)}
 .chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
 .chips button{background:#F4EFE5;border:1.5px solid transparent;border-radius:99px;font-size:13px;font-weight:600;padding:7px 14px;cursor:pointer;font-family:inherit;color:var(--muted);transition:all .15s}
@@ -266,7 +294,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.3</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.6</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -407,8 +435,20 @@ function migrate(d){
   if(d.meta.rev===undefined)d.meta.rev=0;
   if(!d.meta.hook)d.meta.hook={url:'',secret:'',on:false,lastAt:'',lastErr:''};
   if(!d.meta.custom)d.meta.custom={};
+  if(!d.meta.dens)d.meta.dens='auto';
+  if(!d.meta.navStyle)d.meta.navStyle='bottom';
   return d;
 }
+function applyNavStyle(){
+  document.body.classList.toggle('nav-top',(S.meta&&S.meta.navStyle)==='top');
+}
+function setNavStyle(v){S.meta.navStyle=v;save();applyNavStyle();render();toast(v==='top'?'Tabs at the top (classic)':'Tabs at the bottom');}
+function applyDensity(){
+  document.body.classList.remove('dens-compact','dens-roomy');
+  const d=(S.meta&&S.meta.dens)||'auto';
+  if(d!=='auto')document.body.classList.add('dens-'+d);
+}
+function setDens(d){S.meta.dens=d;save();applyDensity();render();toast('Size: '+d);}
 /* ---- Option lists: built-in + anything Vinay adds, remembered forever ---- */
 const ROLES=['Doctor','Design Partner','Design Partner / Referral','Receptionist / staff','Association contact','Commission partner','Official (KPME/IMA/DHO)','Co-founder','Vendor','Friend / personal','Other'];
 const INFLUENCES=['High — can open doors','Medium','Low / not relevant'];
@@ -1047,6 +1087,13 @@ async function toggleRec(){
     },200);
   }catch(e){alert('Microphone blocked. Allow mic access for this site, or use the text box below.');}
 }
+function fitChrome(){
+  const bn=$('bnav');
+  const shown=bn&&getComputedStyle(bn).display!=='none';
+  document.documentElement.style.setProperty('--bnav-h',(shown?bn.offsetHeight:0)+'px');
+}
+window.addEventListener('resize',()=>setTimeout(fitChrome,60));
+window.addEventListener('orientationchange',()=>setTimeout(fitChrome,300));
 function fmtSecs(s){s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
 function recCleanup(){clearInterval(rec.timer);clearInterval(rec.levelTimer);try{if(rec.ac)rec.ac.close();}catch(e){}rec.ac=null;}
 function stopRec(){recCleanup();if(rec.mr&&rec.mr.state==='recording')rec.mr.stop();}
@@ -1550,6 +1597,11 @@ function render(){
     :{today:vMeToday,fue:vFuEngine,seq:vSeq,goals:vGoals,journal:vJournal,data:vData};
   const v=map[tab]||map.today;
   $('main').innerHTML=v();
+  fitChrome();
+  const dg=$('diagline');
+  if(dg)dg.textContent='This screen reports '+window.innerWidth+'×'+window.innerHeight+' px · pixel ratio '+(window.devicePixelRatio||1).toFixed(2)
+    +' · '+(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches?'installed app':'browser tab')
+    +' · layout: '+(window.innerWidth<=412?'small':window.innerWidth<=640?'phone':'wide');
   }catch(err){
     $('main').innerHTML='<div class="card" style="border-left:4px solid var(--red)"><b>Something broke while drawing this screen.</b><div class="m" style="margin-top:6px">Tell Claude: '+esc(String(err&&err.message||err))+'</div><div class="mbtns" style="max-width:280px;margin-top:12px"><button class="btn" onclick="detail=null;reviewState=null;tab=\'today\';render()">Go to Today</button></div></div>';
   }
@@ -2692,6 +2744,17 @@ function vData(){
       +'<button class="btn sm" onclick="installApp()">Install DeskLens HQ</button>'
       +'<div class="note">No prompt? Chrome ⋮ menu → “Install app” / “Add to Home screen”.</div></div>';
   }
+  const dens=(S.meta.dens||'auto');
+  h+='<h2>Screen size</h2><div class="card">'
+    +'<p style="font-size:13.5px;line-height:1.6">If text looks too big or too small on this device, set it here. This device only — it doesn’t change your other phones.</p>'
+    +'<div class="chips" style="margin-top:8px">'
+    +[['compact','Compact'],['auto','Automatic'],['roomy','Roomy']].map(d=>'<button class="'+(dens===d[0]?'on':'')+'" onclick="setDens(\''+d[0]+'\')">'+d[1]+'</button>').join('')
+    +'</div>'
+    +'<div class="subtle" style="margin-top:12px">Tabs</div>'
+    +'<div class="chips" style="margin-top:4px">'
+    +[['bottom','Bottom bar (new)'],['top','Top tabs (as before)']].map(n=>'<button class="'+(((S.meta.navStyle||'bottom')===n[0])?'on':'')+'" onclick="setNavStyle(\''+n[0]+'\')">'+n[1]+'</button>').join('')
+    +'</div>'
+    +'<div class="note" id="diagline"></div></div>';
   h+='<h2>Reminders <span class="pill '+(S.meta.notif?'green':'grey')+'">'+(S.meta.notif?'pop-ups on':'pop-ups off')+'</span></h2><div class="card">'
     +'<p style="font-size:13.5px;line-height:1.6">Two kinds: <b>calendar alerts</b> reach you even when the app is closed (works on every device), and <b>pop-ups</b> nudge you while the app is open.</p>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">'
@@ -3376,12 +3439,14 @@ function doRestore(inp){
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 backfillTags();
 localStorage.setItem(LS_KEY,JSON.stringify(S));
+applyDensity();
+applyNavStyle();
 render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='10.3';
+const APP_VERSION='10.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
