@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>DeskLens HQ — Vinay's Command Center</title>
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#1D5B53">
@@ -23,7 +23,7 @@
   --r:16px; --sh:0 1px 3px rgba(28,27,24,.06),0 4px 14px rgba(28,27,24,.04);
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%;font-size:100%}
 body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--sand);color:var(--ink);min-height:100vh;padding-bottom:calc(110px + env(safe-area-inset-bottom));-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
 h2,.logo,.rhead,.modal h3{font-family:'Newsreader',Georgia,serif}
 .stat .v{font-family:'IBM Plex Mono',monospace}
@@ -117,12 +117,92 @@ h2 .cnt{background:#EFEBE2;color:var(--muted);border-radius:99px;padding:1px 9px
 button,a,.item{-webkit-touch-callout:none}
 .item .t,.sqt,nav button,.chips button,.filterrow button{user-select:none;-webkit-user-select:none}
 @media(display-mode:standalone){body{overscroll-behavior:none}}
+/* thumb-zone navigation on phones */
+.bnav{display:none}
+.backbar{display:flex;align-items:center;gap:6px;margin-bottom:12px}
 @media(max-width:640px){
+  .backbar{position:sticky;top:0;z-index:40;background:var(--sand);padding:8px 0;margin:-4px 0 10px}
+}
+@media(max-width:640px){
+  header nav{display:none}
+  header{padding-bottom:12px}
+  .bnav{
+    display:flex;position:fixed;left:0;right:0;bottom:0;z-index:80;
+    background:rgba(250,249,245,.94);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+    border-top:1px solid var(--line);
+    padding:6px calc(6px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
+  }
+  .bnav button{
+    flex:1;background:none;border:none;font-family:inherit;color:var(--muted);
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:6px 2px;font-size:10.5px;font-weight:600;letter-spacing:.1px;cursor:pointer;border-radius:12px;
+    min-height:52px;justify-content:center;
+  }
+  .bnav button .bi{font-size:19px;line-height:1}
+  .bnav button.on{color:var(--teal);background:var(--teal-soft)}
+  body{padding-bottom:calc(104px + env(safe-area-inset-bottom))}
+  .fab{bottom:calc(88px + env(safe-area-inset-bottom));width:58px;height:58px;font-size:30px;box-shadow:0 4px 16px rgba(29,91,83,.42)}
   main{padding:12px calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left))}
-  .modal{max-height:92vh}
-  .acts button{padding:7px 12px;font-size:12.5px}
-  .sqa button{padding:5px 10px;font-size:12px}
-  .fab{width:62px;height:62px;font-size:32px}
+  .modal{max-height:92vh;border-radius:22px 22px 0 0;padding-top:10px}
+  .modal:before{content:'';display:block;width:38px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 12px}
+  .acts button{padding:8px 13px;font-size:12.5px;min-height:34px}
+  .sqa button{padding:6px 11px;font-size:12px}
+  .item{padding:13px 14px;border-radius:14px}
+  .item:active{transform:scale(.985);background:#FCFBF8}
+  .card{padding:13px}
+  h2{font-size:17.5px;margin:18px 0 8px}
+  .greet{font-size:22px}
+  .btn{min-height:42px}
+  .chips button,.filterrow button{min-height:36px}
+  .pill{font-size:10.5px;padding:2px 8px}
+  .toast{bottom:calc(112px + env(safe-area-inset-bottom));left:12px;right:12px;transform:none;text-align:center}
+  .tl{padding-left:20px}
+  .tl:before{left:5px}
+  .tle .tdot{left:-20px;width:13px;height:13px}
+  table{font-size:12.5px}
+  .hrow{gap:8px}
+  .logo{font-size:17px}
+  .hdate{display:none}
+  .spacesw button{padding:6px 12px;font-size:12.5px;min-height:34px}
+  .topbar{gap:10px}
+  .topbar .btn.sm{flex:1;justify-content:center}
+  .grid.g4{gap:8px}
+  .stat .v{font-size:23px}
+  .stat .l{font-size:11.5px}
+  .f input,.f select,.f textarea{padding:12px;border-radius:12px}
+  .mbtns{position:sticky;bottom:0;background:var(--card);padding-top:10px;margin-top:14px}
+  .cols{grid-template-columns:1fr}
+  .empty{padding:14px;font-size:12.5px}
+}
+/* narrow or scaled-up screens (Android display-size, small phones) — tighten everything */
+@media(max-width:412px){
+  main{padding:10px calc(10px + env(safe-area-inset-right)) 10px calc(10px + env(safe-area-inset-left))}
+  body{font-size:14px}
+  h2{font-size:16px;margin:15px 0 7px}
+  .greet{font-size:19px}
+  .greetsub{font-size:12px}
+  .item{padding:11px 12px;margin-bottom:8px}
+  .item .t{font-size:13.5px}
+  .item .m{font-size:12px}
+  .card{padding:11px}
+  .stat .v{font-size:20px}
+  .stat .l{font-size:11px}
+  .grid.g4{grid-template-columns:1fr 1fr;gap:7px}
+  .acts{gap:5px}
+  .acts button{padding:7px 10px;font-size:11.5px;min-height:32px}
+  .btn{font-size:13.5px;padding:10px 13px;min-height:40px}
+  .btn.sm{font-size:12px;padding:7px 10px}
+  .logo{font-size:16px}
+  .logo span[style]{display:none}
+  .spacesw button{padding:5px 10px;font-size:12px}
+  .bnav button{font-size:9.5px;min-height:48px}
+  .bnav button .bi{font-size:17px}
+  .pill{font-size:10px;padding:2px 7px}
+  .hl{font-size:12.5px;padding:10px 12px}
+  .chips button,.filterrow button{font-size:12px;padding:6px 11px}
+  .modal h3{font-size:16px}
+  .f label{font-size:11.5px}
+  .subtle,.note{font-size:11.5px}
   .irow{flex-wrap:wrap}
   .acts{width:100%;justify-content:flex-end;margin-top:8px}
   .sqa{justify-content:flex-end;margin-top:6px}
@@ -186,7 +266,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.2</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.3</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -196,6 +276,7 @@ a{color:var(--teal)}
 </header>
 <main id="main"></main>
 <button class="fab" id="fab" title="Quick capture">+</button>
+<nav class="bnav" id="bnav"></nav>
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1413,11 +1494,16 @@ const MORE_TABS=['more','ins','dec','data','rep'];
 const TABS_ME=[['today','Today'],['fue','Follow-ups'],['seq','Tasks'],['goals','Goals'],['journal','Journal'],['data','Data']];
 let tab='today';
 let reviewState=null;
+const NAV_ICONS={today:'◎',seq:'☰',pipe:'⌂',people:'☺',ins:'▲',rep:'▤',dec:'✎',data:'⚙',more:'⋯',fue:'✓',goals:'★',journal:'✍'};
 function renderNav(){
   const T=space==='dl'?(S.meta.pilotMode?TABS_DL_PILOT:TABS_DL):TABS_ME;
   const activeKey=(space==='dl'&&S.meta.pilotMode&&MORE_TABS.includes(tab))?'more':tab;
   $('nav').innerHTML=T.map(t=>'<button class="'+(t[0]===activeKey&&!reviewState?'active':'')+'" onclick="go(\''+t[0]+'\')">'+t[1]+'</button>').join('');
   $('spacesw').innerHTML='<button class="'+(space==='dl'?'on':'')+'" onclick="setSpace(\'dl\')">DeskLens</button><button class="'+(space==='me'?'on':'')+'" onclick="setSpace(\'me\')">My World</button>';
+  // phone: five thumb-reachable tabs at the bottom
+  const B=(space==='dl'?(S.meta.pilotMode?TABS_DL_PILOT:TABS_DL.slice(0,4).concat([['more','More']])):TABS_ME).slice(0,5);
+  const bn=$('bnav');
+  if(bn)bn.innerHTML=B.map(t=>'<button class="'+(t[0]===activeKey&&!reviewState?'on':'')+'" onclick="go(\''+t[0]+'\')"><span class="bi">'+(NAV_ICONS[t[0]]||'•')+'</span>'+t[1]+'</button>').join('');
 }
 function go(t){reviewState=null;detail=null;navStack=[];tab=t;render();window.scrollTo(0,0);}
 let detail=null,navStack=[];
@@ -2434,7 +2520,7 @@ function goSearch(sp,t){if(space!==sp)space=sp;detail=null;navStack=[];tab=t;ren
 
 /* ---------- DETAIL PAGES ---------- */
 function detailHeader(title,pills,meta){
-  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><button class="btn sec sm" onclick="navBack()">← Back</button></div>'
+  return '<div class="backbar"><button class="btn sec sm" onclick="navBack()">← Back</button><span class="subtle" style="margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(title)+'</span></div>'
     +'<div class="card" style="margin-bottom:14px"><div class="greet" style="font-size:22px">'+esc(title)+'</div>'
     +(pills?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">'+pills+'</div>':'')
     +(meta?'<div class="m" style="margin-top:4px">'+meta+'</div>':'')+'</div>';
@@ -3295,7 +3381,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='10.2';
+const APP_VERSION='10.3';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
