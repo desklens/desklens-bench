@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.6</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.8</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -802,6 +802,11 @@ function renderForm(){
     try{if(selStart!=null)el.setSelectionRange(selStart,selStart);}catch(e){}
   }
 }
+function voiceAdd(kind){
+  openForm(kind);
+  formVoice();
+  setTimeout(()=>toggleRec(),120);   // one tap: form opens, mic starts
+}
 function formSet(k,val){formReadDOM();form.vals[k]=val;renderForm();}
 function formNew(k,kind){
   formReadDOM();
@@ -810,20 +815,65 @@ function formNew(k,kind){
   form.vals[k]=kind?addCustom(kind,val):val.trim();
   renderForm();
 }
+let rec={mr:null,chunks:[],t0:0,timer:null,blob:null,mime:''};
 function formVoice(){
   formReadDOM();
   const eg=form.kind==='clinic'
-    ?'e.g. “Apex Dental, Dr Shetgar, dentistry, Kalaburagi, Samsung phone, 200 reviews, receptionist Shalini 9876543210”'
-    :'e.g. “Dr Ramesh Kulkarni, orthopaedics, Bidar, 9876543210, met through Dr Shetgar, very influential”';
-  $('modal').innerHTML='<h3>Speak the details</h3>'
-    +'<div class="note" style="margin-bottom:8px">Say everything you know in one go — order doesn’t matter. I’ll place each piece in the right field and show you exactly what went where, before anything is saved.</div>'
-    +'<div class="f"><textarea id="vfx" style="min-height:120px" placeholder="'+esc(eg)+'"></textarea></div>'
-    +'<div class="mbtns"><button class="btn sec" onclick="renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
-  setTimeout(()=>{const t=$('vfx');if(t)t.focus();},50);
+    ?'“Unicare Diagnostic Center, diagnostics, Kalaburagi, Dr Sushil Guttedar, Samsung phone, 320 reviews, receptionist Shalini nine eight seven six five four three two one zero”'
+    : '“Dr Ramesh Kulkarni, orthopaedics, Bidar, nine eight seven six five four three two one zero, met through Dr Shetgar, high influence”';
+  const d=FORM_DEFS[form.kind];
+  const checklist=d.fields.map(f=>{
+    const done=!!form.vals[f.k];
+    return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:13px;'+(done?'opacity:.5':'')+'">'
+      +'<span style="color:'+(done?'var(--green)':'var(--muted)')+'">'+(done?'✓':'•')+'</span>'
+      +'<span><b>'+esc(f.l)+'</b>'+(done?' — '+esc(form.vals[f.k]):'')+'</span></div>';
+  }).join('');
+  $('modal').innerHTML='<h3>Speak once — I’ll fill every field</h3>'
+    +'<div class="note" style="margin-bottom:8px">Say each field by name, in any order — e.g. <i>“clinic name Unicare Diagnostic Center, doctor Sushil Guttedar, specialty diagnostics…”</i>. Skip anything you don’t know.</div>'
+    +'<div class="card" style="margin-bottom:10px;padding:12px"><div class="subtle" style="margin-bottom:4px">Say these:</div>'+checklist+'</div>'
+    +'<div class="card" style="text-align:center;padding:18px;margin-bottom:10px">'
+      +'<button class="btn" id="recbtn" onclick="toggleRec()" style="width:74px;height:74px;border-radius:99px;font-size:28px;padding:0">🎤</button>'
+      +'<div id="rectime" class="subtle" style="margin-top:8px">Tap to record · tap again to stop</div>'
+    +'</div>'
+    +'<div class="subtle" style="text-align:center;margin:6px 0">— or type / dictate with your keyboard mic —</div>'
+    +'<div class="f"><textarea id="vfx" style="min-height:90px" placeholder="Type or dictate the same details…"></textarea></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="stopRecSilent();renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
 }
+async function toggleRec(){
+  if(rec.mr&&rec.mr.state==='recording'){stopRec();return;}
+  if(!navigator.mediaDevices||!window.MediaRecorder){alert('Recording isn’t available in this browser — use the text box below and your keyboard mic.');return;}
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=['audio/webm','audio/mp4','audio/ogg'].find(m=>window.MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(m))||'';
+    rec.mr=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    rec.mime=rec.mr.mimeType||mime||'audio/webm';
+    rec.chunks=[];rec.blob=null;
+    rec.mr.ondataavailable=e=>{if(e.data.size)rec.chunks.push(e.data);};
+    rec.mr.onstop=()=>{
+      rec.blob=new Blob(rec.chunks,{type:rec.mime});
+      stream.getTracks().forEach(t=>t.stop());
+      const b=$('recbtn'),t=$('rectime');
+      if(b){b.textContent='✓';b.style.background='var(--green)';}
+      if(t)t.textContent='Recorded '+fmtSecs((Date.now()-rec.t0)/1000)+' — reading it now…';
+      formVoiceRun();
+    };
+    rec.mr.start();rec.t0=Date.now();
+    const b=$('recbtn');if(b){b.textContent='⏹';b.style.background='var(--red)';}
+    clearInterval(rec.timer);
+    rec.timer=setInterval(()=>{
+      const t=$('rectime');if(t)t.textContent='Recording '+fmtSecs((Date.now()-rec.t0)/1000)+' — tap to stop';
+      if((Date.now()-rec.t0)>120000)stopRec();
+    },500);
+  }catch(e){alert('Microphone blocked. Allow mic access for this site, or use the text box below.');}
+}
+function fmtSecs(s){s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function stopRec(){clearInterval(rec.timer);if(rec.mr&&rec.mr.state==='recording')rec.mr.stop();}
+function stopRecSilent(){clearInterval(rec.timer);if(rec.mr&&rec.mr.state==='recording'){rec.mr.onstop=null;rec.mr.stop();}rec.blob=null;}
 function formVoiceRun(){
   const txt=($('vfx')&&$('vfx').value||'').trim();
-  if(!txt){toast('Nothing to read');return;}
+  const audio=rec.blob;
+  if(!txt&&!audio){toast('Record or type something first');return;}
+  if(audio&&!S.meta.aiKey){alert('Voice recording needs your Gemini key — Data tab → AI power. You can type the details instead.');return;}
   const before=Object.assign({},form.vals);
   const finish=(src)=>{
     const d=FORM_DEFS[form.kind];
@@ -833,17 +883,18 @@ function formVoiceRun(){
       +'<div class="note" style="margin-bottom:8px">Read by '+src+'. Nothing is saved yet.</div>'
       +(changed.length?changed.map(f=>'<div class="item" style="margin-bottom:6px"><div class="irow"><div><div class="m" style="margin:0">'+esc(f.l)+'</div><div class="t">'+esc(form.vals[f.k])+'</div></div><div class="acts"><button onclick="voiceClear(\''+f.k+'\')">✕</button></div></div></div>').join('')
         :'<div class="empty">I couldn’t pick anything out — try naming fields, e.g. “specialty dentistry, city Bidar”.</div>')
-      +(missing.length?'<div class="hl warn" style="margin-top:10px"><i class="dot"></i><div>Still empty: '+missing.map(f=>esc(f.l)).join(', ')+' — fill on the next screen.</div></div>':'')
-      +'<div class="mbtns"><button class="btn sec" onclick="voiceUndo()">Undo</button><button class="btn sec" onclick="formVoice()">Say more</button><button class="btn" onclick="renderForm()">Looks right →</button></div>';
+      +(missing.length?'<div class="hl warn" style="margin-top:10px"><i class="dot"></i><div>Still empty: '+missing.map(f=>esc(f.l)).join(', ')+' — tap “Say more” to add them by voice, or fill them on the next screen.</div></div>':'')
+      +'<div class="mbtns"><button class="btn sec" onclick="formVoice()">Say more</button><button class="btn sec" onclick="renderForm()">Edit fields</button><button class="btn" onclick="formSave()">Save ✓</button></div>';
     form._before=before;
   };
   if(S.meta.aiKey){
-    $('modal').innerHTML='<h3>Reading…</h3><div class="note">Placing each detail in the right field.</div>';
-    aiFillForm(txt,form.kind).then(o=>{
+    $('modal').innerHTML='<h3>'+(audio?'Listening to your recording…':'Reading…')+'</h3><div class="note">Placing each detail in the right field. A few seconds.</div>';
+    aiFillForm(txt,form.kind,audio).then(o=>{
       const d=FORM_DEFS[form.kind],keys=d.fields.map(f=>f.k);
       Object.keys(o).forEach(k=>{if(keys.includes(k)&&o[k])form.vals[k]=String(o[k]);});
-      finish('AI');
-    }).catch(()=>{ruleFill(txt);finish('keywords (AI unavailable)');});
+      rec.blob=null;
+      finish(audio?'your recording':'AI');
+    }).catch(e=>{rec.blob=null;if(txt){ruleFill(txt);finish('keywords (AI unavailable)');}else{alert('Could not read the recording: '+e.message);formVoice();}});
   }else{ruleFill(txt);finish('keywords');}
 }
 function voiceClear(k){form.vals[k]='';formVoiceRunRefresh();}
@@ -878,12 +929,21 @@ function ruleFill(txt){
     const rc=p.match(/recept(?:ionist)?\s+([A-Z][a-z]+)/i);if(rc&&form.kind==='clinic')v.whoAnswers=rc[1];
   });
 }
-async function aiFillForm(txt,kind){
+async function aiFillForm(txt,kind,audioBlob){
   const fields=kind==='clinic'
     ?'name, doctor, specialty, city, stage, source, phone (reception), reviews (number only), whoAnswers (receptionist name), whoAnswersPhone, brand (handset), notes'
     :'name, phone, role, specialty, clinic, city, source, influence, rel (relationship), notes';
-  const body={contents:[{parts:[{text:'Extract fields from this Indian clinic/contact description into JSON with keys: '+fields+'. Use these allowed values where they fit — specialty: '+optList('specialty').join('|')+'; city: '+optList('city').join('|')+'; brand: '+optList('brand').join('|')+'. Known clinics: '+S.clinics.map(c=>c.name).join('; ')+'. Omit keys you cannot determine. Return ONLY JSON.\n\nTEXT: '+txt}]}],generationConfig:{temperature:0,responseMimeType:'application/json'}};
-  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key='+encodeURIComponent(S.meta.aiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const instr='You are filling a form for an Indian medical-clinic CRM from a spoken description (Indian English, may mix Kannada/Hindi words; phone numbers may be spoken digit by digit — join them into a 10-digit number). '
+    +'Extract into JSON with keys: '+fields+'. Match to these allowed values when they fit — specialty: '+optList('specialty').join('|')+'; city: '+optList('city').join('|')+'; brand: '+optList('brand').join('|')
+    +(kind==='person'?('; role: '+optList('role').join('|')+'; influence: '+optList('influence').join('|')+'; rel: '+optList('rel').join('|')):'; stage: '+optList('stage').join('|'))
+    +'. Known clinics: '+S.clinics.map(c=>c.name).join('; ')+'. Known people: '+S.people.map(p=>p.name).join('; ')
+    +'. Omit any key you cannot determine — never guess. Return ONLY JSON.';
+  const parts=[{text:instr}];
+  if(txt)parts.push({text:'\n\nDESCRIPTION: '+txt});
+  if(audioBlob)parts.push({inline_data:{mime_type:(audioBlob.type||'audio/webm').split(';')[0],data:await fileToB64(audioBlob)}});
+  const model=audioBlob?'gemini-2.5-flash':'gemini-2.5-flash-lite';
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+encodeURIComponent(S.meta.aiKey),
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0,responseMimeType:'application/json'}})});
   if(!r.ok)throw new Error('AI '+r.status);
   const j=await r.json();
   return JSON.parse(j.candidates[0].content.parts[0].text);
@@ -1524,7 +1584,8 @@ const STAGES=['Lead','Audit (7-day)','Design Partner','Pilot','Paying','Renewed'
 const SPECS=['Dentistry','Dermatology','Skin Aesthetics','Ophthalmology','Orthopaedics','ENT','Diagnostics / Pathology','General Medicine','General Surgery','Paediatrics','Gynaecology / Obstetrics','Cardiology','Neurology','Psychiatry','Urology','Nephrology','Gastroenterology','Pulmonology','Endocrinology / Diabetology','Oncology','Radiology','Physiotherapy','Ayurveda','Homeopathy','Multi-specialty','Other'];
 let pipeFilter='All';
 function vPipe(){
-  let h='<div class="topbar"><div class="subtle">'+S.clinics.length+' clinics \u00b7 handset check is a hard gate before every demo</div><button class="btn sm" onclick="editClinic()">+ Add clinic</button></div>';
+  let h='<div class="topbar"><div class="subtle">'+S.clinics.length+' clinics \u00b7 handset check is a hard gate before every demo</div>'
+    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'clinic\')">\ud83c\udfa4 Voice add</button><button class="btn sm sec" onclick="editClinic()">+ Add clinic</button></div></div>';
   h+='<div class="filterrow">'+['All',...STAGES].map(s=>'<button class="'+(pipeFilter===s?'on':'')+'" onclick="setPF(\''+s.replace(/'/g,"\\'")+'\')">'+s+'</button>').join('')+'</div>';
   const list=S.clinics.filter(c=>pipeFilter==='All'||c.stage===pipeFilter);
   h+=list.length?list.map(c=>{
@@ -1554,7 +1615,8 @@ function vPipe(){
 function setPF(s){pipeFilter=s;render();}
 
 function vPeople(){
-  let h='<div class="topbar"><div class="subtle">Relationships are the moat \u2014 tier-2/3 field distribution network.</div><button class="btn sm" onclick="editPerson()">+ Add person</button></div>';
+  let h='<div class="topbar"><div class="subtle">Relationships are the moat \u2014 tier-2/3 field distribution network.</div>'
+    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'person\')">\ud83c\udfa4 Voice add</button><button class="btn sm sec" onclick="editPerson()">+ Add person</button></div></div>';
   h+=S.people.map(p=>{
     const fus=openFU().filter(f=>(f.who||'').toLowerCase()===p.name.toLowerCase());
     const infPill=p.influence?('<span class="pill '+(p.influence.startsWith('High')?'green':p.influence==='Medium'?'amber':'grey')+'">'+esc(p.influence.split(' \u2014')[0])+' influence</span>'):'';
@@ -1655,16 +1717,32 @@ function openConv(kind,id){
 function renderConvInput(){
   $('modal').innerHTML='<h3>Log a conversation — '+esc(conv.name)+'</h3>'
     +'<div class="note" style="margin-bottom:10px">Upload the call recording, or paste/dictate what was discussed. I’ll pull out the key points, promises and objections — you review before anything is saved.</div>'
-    +'<div class="f"><label>Recording (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
-    +'<div class="subtle" style="text-align:center;margin:6px 0">— or —</div>'
+    +'<div class="card" style="text-align:center;padding:14px;margin-bottom:10px">'
+      +'<button class="btn" id="recbtn" onclick="toggleConvRec()" style="width:64px;height:64px;border-radius:99px;font-size:24px;padding:0">🎤</button>'
+      +'<div id="rectime" class="subtle" style="margin-top:6px">Tap to record what was discussed</div></div>'
+    +'<div class="subtle" style="text-align:center;margin:6px 0">— or upload / paste —</div>'
+    +'<div class="f"><label>Recording file (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
     +'<div class="f"><label>What was discussed</label><textarea id="cvtxt" style="min-height:120px" placeholder="Dictate or paste the transcript…"></textarea></div>'
     +'<div class="f"><label>Date</label><input type="date" id="cvdate" value="'+todayISO()+'"></div>'
     +'<div class="mbtns"><button class="btn sec" onclick="closeModal();conv=null">Cancel</button><button class="btn" onclick="convRun()">Read it →</button></div>';
   $('overlay').classList.add('open');
 }
 function fileToB64(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(f);});}
+async function toggleConvRec(){
+  if(rec.mr&&rec.mr.state==='recording'){stopRec();return;}
+  await toggleRec();
+  if(rec.mr)rec.mr.onstop=()=>{
+    rec.blob=new Blob(rec.chunks,{type:rec.mime});
+    try{rec.mr.stream.getTracks().forEach(t=>t.stop());}catch(e){}
+    clearInterval(rec.timer);
+    const b=$('recbtn'),t=$('rectime');
+    if(b){b.textContent='✓';b.style.background='var(--green)';}
+    if(t)t.textContent='Recorded '+fmtSecs((Date.now()-rec.t0)/1000)+' — reading it now…';
+    convRun();
+  };
+}
 async function convRun(){
-  const f=$('cvfile')&&$('cvfile').files[0];
+  const f=(rec.blob?new File([rec.blob],'rec.webm',{type:rec.mime}):null)||($('cvfile')&&$('cvfile').files[0]);
   const txt=($('cvtxt')&&$('cvtxt').value||'').trim();
   const date=($('cvdate')&&$('cvdate').value)||todayISO();
   if(!f&&!txt){toast('Add a recording or some text');return;}
@@ -1692,8 +1770,9 @@ async function convRun(){
     const j=await r.json();
     conv.out=JSON.parse(j.candidates[0].content.parts[0].text);
     conv.date=date;conv.src=f?'recording':'notes';
+    rec.blob=null;
     renderConvReview();
-  }catch(e){alert('Could not read that: '+e.message);renderConvInput();}
+  }catch(e){rec.blob=null;alert('Could not read that: '+e.message);renderConvInput();}
 }
 function renderConvReview(){
   const o=conv.out||{};
@@ -2878,7 +2957,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='8.6';
+const APP_VERSION='8.8';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
