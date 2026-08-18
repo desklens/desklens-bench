@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.8</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.0</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -540,7 +540,7 @@ function openModal(title,fields,onSave,delOpt,saveLabel){
     if(f.type==='select'){
       const list=f.kind?[...(f.allowBlank?['']:[]),...optList(f.kind)]:f.options;
       const full=list.includes(f.value)?list:[f.value,...list];
-      return '<div class="f"><label>'+esc(f.label)+'</label><select id="mf_'+f.key+'"'+(f.kind?' onchange="modalNewOpt(this,\''+f.kind+'\')"':'')+'>'
+      return '<div class="f"><label>'+esc(f.label)+'</label><select id="mf_'+f.key+'"'+(f.kind?' onchange="modalNewOpt(this,\''+f.kind+'\')"':(f.onchange?' onchange="'+f.onchange+'"':''))+'>'
         +full.map(o=>'<option value="'+esc(o)+'"'+(o===f.value?' selected':'')+'>'+esc(o)+'</option>').join('')
         +(f.kind?'<option value="__new__">＋ Add new…</option>':'')
         +'</select></div>';
@@ -577,8 +577,22 @@ function tagToggle(key,btn){
   const inp=$('mf_'+key);const name=btn.textContent;
   let arr=inp.value.split(',').map(s=>s.trim()).filter(Boolean);
   if(arr.some(x=>x.toLowerCase()===name.toLowerCase())){arr=arr.filter(x=>x.toLowerCase()!==name.toLowerCase());btn.classList.remove('on');}
-  else{arr.push(name);btn.classList.add('on');}
+  else{arr.push(name);btn.classList.add('on');pullFromPerson(name);}
   inp.value=arr.join(', ');
+}
+/* fill blank fields in the open edit form from the linked person/clinic */
+function setIfBlank(id,val){const el=$(id);if(el&&val&&!el.value){el.value=val;el.style.background='#EAF5F1';}}
+function pullFromPerson(name){
+  const p=S.people.find(x=>nameEq(x.name,name));if(!p)return;
+  setIfBlank('mf_specialty',p.specialty);setIfBlank('mf_city',p.city);setIfBlank('mf_source',p.source);
+  if(p.specialty||p.city)toast('Filled blanks from '+p.name.split(' ').slice(-1)[0]);
+}
+function pullFromClinic(sel){
+  const c=S.clinics.find(x=>x.name===sel.value);if(!c)return;
+  setIfBlank('mf_city',c.city);
+  if(c.specialty&&c.specialty!=='Other')setIfBlank('mf_specialty',c.specialty);
+  setIfBlank('mf_source',c.source);
+  toast('Filled blanks from '+c.name.split(' ')[0]);
 }
 $('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeModal();});
 
@@ -802,12 +816,36 @@ function renderForm(){
     try{if(selStart!=null)el.setSelectionRange(selStart,selStart);}catch(e){}
   }
 }
+let autoSaveT=null;
 function voiceAdd(kind){
   openForm(kind);
   formVoice();
-  setTimeout(()=>toggleRec(),120);   // one tap: form opens, mic starts
+  setTimeout(()=>toggleRec(),120);   // one tap: form opens, mic starts, stops on silence
 }
-function formSet(k,val){formReadDOM();form.vals[k]=val;renderForm();}
+function formSet(k,val){
+  formReadDOM();
+  form.vals[k]=val;
+  // pull the other side's details across, same as the wizard does
+  if(form.kind==='clinic'&&k==='doctor'){
+    const p=S.people.find(x=>nameEq(x.name,val));
+    if(p){
+      if(p.specialty&&!form.vals.specialty)form.vals.specialty=p.specialty;
+      if(p.city)form.vals.city=p.city;
+      if(p.source&&!form.vals.source)form.vals.source=p.source;
+      toast('Pulled '+p.name.split(' ').slice(-1)[0]+'’s details in');
+    }
+  }
+  if(form.kind==='person'&&k==='clinic'){
+    const c=S.clinics.find(x=>x.name===val);
+    if(c){
+      if(c.city)form.vals.city=c.city;
+      if(c.specialty&&c.specialty!=='Other'&&!form.vals.specialty)form.vals.specialty=c.specialty;
+      if(c.source&&!form.vals.source)form.vals.source=c.source;
+      toast('Pulled '+c.name.split(' ')[0]+' details in');
+    }
+  }
+  renderForm();
+}
 function formNew(k,kind){
   formReadDOM();
   const val=prompt('Add a new '+(kind||k)+':');
@@ -859,16 +897,41 @@ async function toggleRec(){
     };
     rec.mr.start();rec.t0=Date.now();
     const b=$('recbtn');if(b){b.textContent='⏹';b.style.background='var(--red)';}
+    const t0el=$('rectime');if(t0el)t0el.innerHTML='Speak now… <div style="font-size:20px;color:var(--teal)">▁</div><span style="font-size:11px">stops on its own when you finish · or tap to stop</span>';
+    // listen to the level so we can stop by ourselves when he stops talking
+    let spoke=false,lastLoud=Date.now(),level=0;
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(AC){
+        rec.ac=new AC();
+        const src=rec.ac.createMediaStreamSource(stream),an=rec.ac.createAnalyser();
+        an.fftSize=512;src.connect(an);
+        const buf=new Uint8Array(an.fftSize);
+        rec.levelTimer=setInterval(()=>{
+          an.getByteTimeDomainData(buf);
+          let sum=0;for(let i=0;i<buf.length;i++)sum+=Math.abs(buf[i]-128);
+          level=sum/buf.length;
+          if(level>5){spoke=true;lastLoud=Date.now();}
+        },100);
+      }
+    }catch(e){}
     clearInterval(rec.timer);
     rec.timer=setInterval(()=>{
-      const t=$('rectime');if(t)t.textContent='Recording '+fmtSecs((Date.now()-rec.t0)/1000)+' — tap to stop';
-      if((Date.now()-rec.t0)>120000)stopRec();
-    },500);
+      const t=$('rectime'),el=Date.now()-rec.t0;
+      const bars='▁▂▃▄▅▆▇'.slice(0,Math.max(1,Math.min(7,Math.round(level/3))));
+      if(t)t.innerHTML=(spoke?'Listening ':'Speak now… ')+fmtSecs(el/1000)
+        +'<div style="font-size:20px;color:var(--teal);letter-spacing:2px">'+bars+'</div>'
+        +'<span style="font-size:11px">stops on its own when you finish · or tap to stop</span>';
+      if(spoke&&Date.now()-lastLoud>2500)stopRec();      // he finished talking
+      if(!spoke&&el>12000)stopRec();                      // nothing said
+      if(el>120000)stopRec();                             // hard cap
+    },200);
   }catch(e){alert('Microphone blocked. Allow mic access for this site, or use the text box below.');}
 }
 function fmtSecs(s){s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
-function stopRec(){clearInterval(rec.timer);if(rec.mr&&rec.mr.state==='recording')rec.mr.stop();}
-function stopRecSilent(){clearInterval(rec.timer);if(rec.mr&&rec.mr.state==='recording'){rec.mr.onstop=null;rec.mr.stop();}rec.blob=null;}
+function recCleanup(){clearInterval(rec.timer);clearInterval(rec.levelTimer);try{if(rec.ac)rec.ac.close();}catch(e){}rec.ac=null;}
+function stopRec(){recCleanup();if(rec.mr&&rec.mr.state==='recording')rec.mr.stop();}
+function stopRecSilent(){recCleanup();if(rec.mr&&rec.mr.state==='recording'){rec.mr.onstop=null;rec.mr.stop();}rec.blob=null;clearTimeout(autoSaveT);}
 function formVoiceRun(){
   const txt=($('vfx')&&$('vfx').value||'').trim();
   const audio=rec.blob;
@@ -883,7 +946,7 @@ function formVoiceRun(){
       +'<div class="note" style="margin-bottom:8px">Read by '+src+'. Nothing is saved yet.</div>'
       +(changed.length?changed.map(f=>'<div class="item" style="margin-bottom:6px"><div class="irow"><div><div class="m" style="margin:0">'+esc(f.l)+'</div><div class="t">'+esc(form.vals[f.k])+'</div></div><div class="acts"><button onclick="voiceClear(\''+f.k+'\')">✕</button></div></div></div>').join('')
         :'<div class="empty">I couldn’t pick anything out — try naming fields, e.g. “specialty dentistry, city Bidar”.</div>')
-      +(missing.length?'<div class="hl warn" style="margin-top:10px"><i class="dot"></i><div>Still empty: '+missing.map(f=>esc(f.l)).join(', ')+' — tap “Say more” to add them by voice, or fill them on the next screen.</div></div>':'')
+      +(missing.length?'<div class="hl warn" style="margin-top:10px"><i class="dot"></i><div>Still empty: '+missing.map(f=>esc(f.l)).join(', ')+'</div></div>':'')
       +'<div class="mbtns"><button class="btn sec" onclick="formVoice()">Say more</button><button class="btn sec" onclick="renderForm()">Edit fields</button><button class="btn" onclick="formSave()">Save ✓</button></div>';
     form._before=before;
   };
@@ -949,6 +1012,7 @@ async function aiFillForm(txt,kind,audioBlob){
   return JSON.parse(j.candidates[0].content.parts[0].text);
 }
 function formSave(){
+  clearTimeout(autoSaveT);autoSaveT=null;
   formReadDOM();
   const v=form.vals,kind=form.kind;
   if(!v.name||!v.name.trim()){
@@ -2849,7 +2913,7 @@ function editPerson(id){
     {key:'phone',label:'Personal mobile (optional)',type:'tel',value:p.phone||''},
     {key:'role',label:'Role',type:'select',kind:'role',value:p.role},
     {key:'specialty',label:'Specialty (if doctor)',type:'select',kind:'specialty',allowBlank:true,value:p.specialty||''},
-    {key:'clinic',label:'Linked clinic',type:'select',options:clinicOpts.includes(p.clinic)?clinicOpts:[p.clinic||'— none —',...clinicOpts.filter(c=>c!=='— none —')],value:p.clinic||'— none —'},
+    {key:'clinic',label:'Linked clinic',type:'select',onchange:'pullFromClinic(this)',options:clinicOpts.includes(p.clinic)?clinicOpts:[p.clinic||'— none —',...clinicOpts.filter(c=>c!=='— none —')],value:p.clinic||'— none —'},
     {key:'city',label:'City',type:'select',kind:'city',value:p.city||'Kalaburagi'},
     {key:'source',label:'How you know them',type:'select',kind:'source',allowBlank:true,value:p.source},
     {key:'influence',label:'Influence for DeskLens',type:'select',kind:'influence',allowBlank:true,value:p.influence},
@@ -2957,7 +3021,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='8.8';
+const APP_VERSION='9.0';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
