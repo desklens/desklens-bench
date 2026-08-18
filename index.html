@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.9</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.0</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -1766,7 +1766,7 @@ function trailFor(kind,obj){
   const names=kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name];
   const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
   (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',type:'visit',title:'Visit',body:v.note||''}));
-  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[]}));
+  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:obj.id,ownerKind:kind}));
   (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,type:'stage',title:'Stage → '+s.stage,body:''}));
   [...S.followups,...S.me.followups].forEach(f=>{
     if(!isMine(f.who))return;
@@ -1791,7 +1791,8 @@ function trailHTML(kind,obj){
       +((e.objections&&e.objections.length)?'<div class="m"><span class="pill amber">objection</span> '+e.objections.map(esc).join(' · ')+'</div>':'')
       +((e.pricing&&e.pricing.length)?'<div class="m"><span class="pill">pricing</span> '+e.pricing.map(esc).join(' · ')+'</div>':'')
       +(e.next?'<div class="m"><b>Next:</b> '+esc(e.next)+'</div>':'')
-      +tagPills(e.tags)
+      +(e.callId?'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+tagPills(e.tags)
+        +'<button class="btn sm sec" style="padding:2px 8px;font-size:11px;margin-top:5px" onclick="editTags(\''+e.ownerKind+'\',\''+e.ownerId+'\',\''+e.callId+'\')">tags</button></div>':tagPills(e.tags))
       +'</div>';
   });
   return h+'</div>';
@@ -1831,6 +1832,42 @@ function relAnalysis(kind,obj){
 }
 
 /* ---------- CONVERSATION TAGS: turn talk into buckets ---------- */
+function backfillTags(){
+  let n=0;
+  const doIt=arr=>(arr||[]).forEach(o=>(o.calls||[]).forEach(v=>{
+    if(!v.tags||!v.tags.length){
+      v.tags=ruleTags([v.summary,(v.points||[]).join(' '),(v.objections||[]).join(' '),(v.pricing||[]).join(' '),v.nextStep].join(' '));
+      if(v.objections&&v.objections.length&&!v.tags.includes('Objection'))v.tags.push('Objection');
+      if(v.pricing&&v.pricing.length&&!v.tags.includes('Pricing'))v.tags.push('Pricing');
+      n++;
+    }
+  }));
+  doIt(S.clinics);doIt(S.people);
+  if(n){localStorage.setItem(LS_KEY,JSON.stringify(S));}
+  return n;
+}
+function editTags(kind,ownerId,callId){
+  const o=kind==='clinic'?S.clinics.find(x=>x.id===ownerId):S.people.find(x=>x.id===ownerId);
+  const c=o&&(o.calls||[]).find(x=>x.id===callId);if(!c)return;
+  const cur=c.tags||[];
+  $('modal').innerHTML='<h3>Buckets for this conversation</h3>'
+    +'<div class="note" style="margin-bottom:8px">'+esc((c.summary||'').slice(0,120))+'</div>'
+    +'<div class="chips" id="tagchips">'+CONV_TAGS.map(t=>'<button class="'+(cur.includes(t)?'on':'')+'" onclick="this.classList.toggle(\'on\')">'+esc(t)+'</button>').join('')+'</div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" onclick="saveTags(\''+kind+'\',\''+ownerId+'\',\''+callId+'\')">Save</button></div>';
+  $('overlay').classList.add('open');
+}
+function saveTags(kind,ownerId,callId){
+  const o=kind==='clinic'?S.clinics.find(x=>x.id===ownerId):S.people.find(x=>x.id===ownerId);
+  const c=o&&(o.calls||[]).find(x=>x.id===callId);if(!c)return;
+  c.tags=[...document.querySelectorAll('#tagchips button.on')].map(b=>b.textContent);
+  save();closeModal();render();toast('Buckets updated ✓');
+}
+function retagAll(){
+  const doIt=arr=>(arr||[]).forEach(o=>(o.calls||[]).forEach(v=>{v.tags=null;}));
+  doIt(S.clinics);doIt(S.people);
+  const n=backfillTags();
+  save();render();toast(n+' conversation'+(n!==1?'s':'')+' re-tagged ✓');
+}
 const CONV_TAGS=['Profile','Feature request','Pricing','Objection','Recordings shared','Referral','Competitor','Consent / DPDP','Handset','Demo / audit','Commitment','Timing','Renewal risk','Intro'];
 const TAG_RULES=[
  ['Feature request',/\b(want|wants|wanted|needs?|asking for|requirement|feature|integration|whatsapp|reminder engine|follow ?up engine|dashboard)\b/i],
@@ -2280,7 +2317,8 @@ function repSel(k,label,opts,extra){
 function vReports(){
   const rows=repRows(),cols=REP_COLS[rep.base];
   let h='<div class="topbar"><div class="subtle">Build any view of your data. Tap a row to open it.</div><button class="btn sm sec" onclick="repCSV()">⬇ Export CSV</button></div>';
-  h+='<div class="chips">'+[['clinics','Clinics'],['people','People'],['convs','Conversations'],['followups','Follow-ups'],['tasks','Tasks']].map(b=>'<button class="'+(rep.base===b[0]?'on':'')+'" onclick="setRepBase(\''+b[0]+'\')">'+b[1]+'</button>').join('')+'</div>';
+  h+='<div class="chips">'+[['clinics','Clinics'],['people','People'],['convs','Conversations'],['followups','Follow-ups'],['tasks','Tasks']].map(b=>'<button class="'+(rep.base===b[0]?'on':'')+'" onclick="setRepBase(\''+b[0]+'\')">'+b[1]+'</button>').join('')
+    +(rep.base==='convs'?'<button onclick="retagAll()" title="Re-run tagging on every conversation">↻ re-tag all</button>':'')+'</div>';
   h+='<div class="card" style="margin-bottom:12px"><div class="subtle" style="margin-bottom:6px">Quick reports</div><div class="filterrow">'
     +PRESETS.map((p,i)=>'<button onclick="applyPreset('+i+')">'+esc(p.n)+'</button>').join('')+'</div></div>';
   h+='<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:10px;flex-wrap:wrap">';
@@ -3228,13 +3266,14 @@ function doRestore(inp){
 
 /* ================= INIT ================= */
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+backfillTags();
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.9';
+const APP_VERSION='10.0';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
