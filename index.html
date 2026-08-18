@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.4</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.5</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -300,7 +300,8 @@ function migrate(d){
   ['sequence','inbox','followups','goals','journal','routines'].forEach(k=>{d.me[k]=d.me[k]||[];});
   (d.me.sequence||[]).forEach(x=>{if(!x.created)x.created=todayISO();if(x.link===undefined)x.link='';});
   (d.people||[]).forEach(p=>{p.city=p.city||'';p.clinic=p.clinic||'';p.source=p.source||'';p.influence=p.influence||'';p.rel=p.rel||'';p.phone=p.phone||'';p.specialty=p.specialty||'';});
-  (d.clinics||[]).forEach(c=>{if(c.brand===undefined)c.brand='';c.phone=c.phone||'';c.reviews=c.reviews||'';c.whoAnswers=c.whoAnswers||'';c.source=c.source||'';if(!Array.isArray(c.doctors))c.doctors=c.doctor?[c.doctor]:[];delete c.doctor;c.whoAnswersPhone=c.whoAnswersPhone||'';});
+  (d.clinics||[]).forEach(c=>{if(c.brand===undefined)c.brand='';c.phone=c.phone||'';c.reviews=c.reviews||'';c.whoAnswers=c.whoAnswers||'';c.source=c.source||'';if(!Array.isArray(c.doctors))c.doctors=c.doctor?[c.doctor]:[];delete c.doctor;c.whoAnswersPhone=c.whoAnswersPhone||'';c.calls=c.calls||[];});
+  (d.people||[]).forEach(p=>{p.calls=p.calls||[];});
   (d.followups||[]).forEach(f=>{if(!f.repeat)f.repeat='none';if(f.time===undefined)f.time='';});
   (d.me.followups||[]).forEach(f=>{if(!f.repeat)f.repeat='none';if(f.time===undefined)f.time='';});
   if(d.meta.aiKey===undefined)d.meta.aiKey='';
@@ -1553,6 +1554,180 @@ function vPeople(){
   return h;
 }
 
+/* ---------- RELATIONSHIP TRAIL: every touch, in order ---------- */
+function trailFor(kind,obj){
+  const T=[];
+  const names=kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name];
+  const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
+  (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',type:'visit',title:'Visit',body:v.note||''}));
+  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||''}));
+  (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,type:'stage',title:'Stage → '+s.stage,body:''}));
+  [...S.followups,...S.me.followups].forEach(f=>{
+    if(!isMine(f.who))return;
+    T.push({date:f.created||f.due||'',type:'promise',title:(f.done?'Promise kept: ':'Promise: ')+f.text,body:f.due?('due '+fmtDs(f.due)):''});
+  });
+  S.sequence.filter(t=>isMine(t.link)).forEach(t=>T.push({date:t.created||'',type:'task',title:(t.done?'Done: ':'Task: ')+t.title,body:t.notes||''}));
+  return T.filter(x=>x.date).sort((a,b)=>b.date.localeCompare(a.date)||(b.time||'').localeCompare(a.time||''));
+}
+function trailHTML(kind,obj){
+  const T=trailFor(kind,obj);
+  if(!T.length)return '<div class="empty">No history yet. Log a visit or a conversation.</div>';
+  const col={visit:'#BE185D',call:'#0F766E',stage:'#0369A1',promise:'#B4711F',task:'#4D7C0F'};
+  let h='<div class="tl">',lastM='';
+  T.forEach(e=>{
+    const m=new Date(e.date+'T00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+    if(m!==lastM){h+='<div class="tlmonth">'+m+'</div>';lastM=m;}
+    h+='<div class="tle"><div class="tdot" style="background:'+(col[e.type]||'#78716C')+'"></div>'
+      +'<div class="tt">'+esc(e.title)+'</div>'
+      +'<div class="tm">'+fmtD(e.date)+(e.time?' · '+esc(e.time):'')+'</div>'
+      +(e.body?'<div class="m">'+esc(e.body)+'</div>':'')
+      +((e.points&&e.points.length)?'<div class="m">'+e.points.map(p=>'• '+esc(p)).join('<br>')+'</div>':'')
+      +((e.objections&&e.objections.length)?'<div class="m"><span class="pill amber">objection</span> '+e.objections.map(esc).join(' · ')+'</div>':'')
+      +((e.pricing&&e.pricing.length)?'<div class="m"><span class="pill">pricing</span> '+e.pricing.map(esc).join(' · ')+'</div>':'')
+      +(e.next?'<div class="m"><b>Next:</b> '+esc(e.next)+'</div>':'')
+      +'</div>';
+  });
+  return h+'</div>';
+}
+function relAnalysis(kind,obj){
+  const T=trailFor(kind,obj);
+  if(!T.length)return '';
+  const visits=T.filter(x=>x.type==='visit'),calls=T.filter(x=>x.type==='call');
+  const touches=visits.length+calls.length;
+  const first=T[T.length-1].date,last=T[0].date;
+  const span=Math.max(1,Math.round((new Date(last)-new Date(first))/864e5));
+  const gap=touches>1?Math.round(span/(touches-1)):null;
+  const sinceTouch=daysAgo(last);
+  const objs=[],prices=[];
+  calls.forEach(c=>{(c.objections||[]).forEach(o=>objs.push(o));(c.pricing||[]).forEach(p=>prices.push(p));});
+  const openProm=[...S.followups,...S.me.followups].filter(f=>!f.done&&(kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name]).some(n=>nameEq(n,f.who)));
+  const overdue=openProm.filter(f=>f.due&&daysTo(f.due)<0);
+  const stages=(obj.stageHistory||[]).length;
+  let temp='steady',tcls='';
+  if(sinceTouch>21){temp='going cold';tcls='bad';}
+  else if(sinceTouch>10){temp='cooling';tcls='warn';}
+  else if(touches>=3&&gap&&gap<=10){temp='warm and moving';tcls='good';}
+  let h='<div class="card" style="margin-bottom:12px"><b style="font-size:13px">Relationship read</b>'
+    +'<div class="grid g4" style="margin-top:8px">'
+    +stat(touches,'touches','')+stat(sinceTouch+'d','since last','')+stat(gap?gap+'d':'—','avg gap','')+stat(openProm.length,'open promises',overdue.length?'warn':'')
+    +'</div>'
+    +'<div class="hl '+(tcls||'info')+'" style="margin-top:10px"><i class="dot"></i><div>'
+    +'<b>'+temp[0].toUpperCase()+temp.slice(1)+'.</b> '
+    +touches+' touch'+(touches>1?'es':'')+' over '+span+' days'+(gap?', roughly every '+gap+' days':'')+'. Last contact '+sinceTouch+' days ago'
+    +(stages>1?'. Moved through '+stages+' stages':'')+'.'
+    +(overdue.length?' <b>'+overdue.length+' promise'+(overdue.length>1?'s':'')+' overdue — fix before the next visit.</b>':'')
+    +(sinceTouch>14?' At this gap, the relationship is running on memory, not momentum.':'')
+    +'</div></div>';
+  if(objs.length)h+='<div class="m" style="margin-top:8px"><b>Recurring objections:</b> '+objs.slice(0,4).map(esc).join(' · ')+'</div>';
+  if(prices.length)h+='<div class="m"><b>Pricing signals:</b> '+prices.slice(0,4).map(esc).join(' · ')+'</div>';
+  return h+'</div>';
+}
+
+/* ---------- CONVERSATION IMPORT (audio or transcript) ---------- */
+let conv=null;
+function openConv(kind,id){
+  const o=kind==='clinic'?S.clinics.find(c=>c.id===id):S.people.find(p=>p.id===id);
+  if(!o)return;
+  conv={kind,id,name:o.name,stage:o.stage||'',out:null};
+  renderConvInput();
+}
+function renderConvInput(){
+  $('modal').innerHTML='<h3>Log a conversation — '+esc(conv.name)+'</h3>'
+    +'<div class="note" style="margin-bottom:10px">Upload the call recording, or paste/dictate what was discussed. I’ll pull out the key points, promises and objections — you review before anything is saved.</div>'
+    +'<div class="f"><label>Recording (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
+    +'<div class="subtle" style="text-align:center;margin:6px 0">— or —</div>'
+    +'<div class="f"><label>What was discussed</label><textarea id="cvtxt" style="min-height:120px" placeholder="Dictate or paste the transcript…"></textarea></div>'
+    +'<div class="f"><label>Date</label><input type="date" id="cvdate" value="'+todayISO()+'"></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal();conv=null">Cancel</button><button class="btn" onclick="convRun()">Read it →</button></div>';
+  $('overlay').classList.add('open');
+}
+function fileToB64(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(f);});}
+async function convRun(){
+  const f=$('cvfile')&&$('cvfile').files[0];
+  const txt=($('cvtxt')&&$('cvtxt').value||'').trim();
+  const date=($('cvdate')&&$('cvdate').value)||todayISO();
+  if(!f&&!txt){toast('Add a recording or some text');return;}
+  if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
+  if(f&&f.size>18*1024*1024){alert('That file is '+(f.size/1048576).toFixed(1)+' MB. Keep recordings under ~18 MB (about 10 minutes) — or paste the transcript instead.');return;}
+  $('modal').innerHTML='<h3>Listening…</h3><div class="note">'+(f?'Transcribing and extracting. A few-minute call takes ~20–40 seconds.':'Extracting the key points.')+'</div>';
+  const known=S.people.map(p=>p.name).join('; ');
+  const instruction='You are analysing a conversation between Vinay (founder of DeskLens, an AI call-intelligence product sold to clinics in tier-2/3 India for ₹6,000/month, sales motion = free 7-day call audit) and people connected to "'+conv.name+'". '
+    +'This is a SALES / RELATIONSHIP conversation, not a patient call. Known contacts: '+known+'.\n'
+    +'Extract only what was actually said — never invent. Return ONLY JSON:\n'
+    +'{"summary":"3-4 sentence account of the conversation","points":["concrete facts, decisions, context worth remembering"],'
+    +'"commitments":[{"who":"Vinay|<their name>","what":"the promise","due":"YYYY-MM-DD or empty"}],'
+    +'"objections":["concerns or pushback raised, in their words where possible"],'
+    +'"pricing":["anything about price, budget, comparisons, willingness to pay"],'
+    +'"people":[{"name":"","role":"a role if stated"}],'
+    +'"nextStep":"the single clearest next action","suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|"'
+    +',"sentimentNote":"one line on how warm/hesitant they seemed, based on what they said"}';
+  try{
+    const parts=[{text:instruction}];
+    if(txt)parts.push({text:'\n\nTRANSCRIPT / NOTES:\n'+txt});
+    if(f)parts.push({inline_data:{mime_type:f.type||'audio/mpeg',data:await fileToB64(f)}});
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(S.meta.aiKey),
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0.1,responseMimeType:'application/json'}})});
+    if(!r.ok)throw new Error('AI '+r.status+(r.status===400?' — file type may be unsupported; try mp3/m4a or paste the transcript':''));
+    const j=await r.json();
+    conv.out=JSON.parse(j.candidates[0].content.parts[0].text);
+    conv.date=date;conv.src=f?'recording':'notes';
+    renderConvReview();
+  }catch(e){alert('Could not read that: '+e.message);renderConvInput();}
+}
+function renderConvReview(){
+  const o=conv.out||{};
+  const list=(arr,cls)=>(arr&&arr.length)?arr.map(x=>'<div class="m" style="margin:2px 0">• '+esc(typeof x==='string'?x:JSON.stringify(x))+'</div>').join(''):'<div class="subtle">none</div>';
+  let h='<h3>What I heard — '+esc(conv.name)+'</h3><div class="note" style="margin-bottom:10px">Nothing is saved yet. Uncheck anything you don’t want kept.</div>';
+  h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Summary</b><div class="m">'+esc(o.summary||'—')+'</div>'
+    +(o.sentimentNote?'<div class="m"><i>'+esc(o.sentimentNote)+'</i></div>':'')+'</div>';
+  h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Key points</b>'+list(o.points)+'</div>';
+  if(o.objections&&o.objections.length)h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Objections</b>'+list(o.objections)+'</div>';
+  if(o.pricing&&o.pricing.length)h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Pricing signals</b>'+list(o.pricing)+'</div>';
+  if(o.commitments&&o.commitments.length){
+    h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Promises → follow-ups</b>'
+      +o.commitments.map((c,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px"><input type="checkbox" id="cvc'+i+'" checked style="margin-top:3px"><span><b>'+esc(c.what||'')+'</b><br><span class="subtle">'+esc(c.who||'')+(c.due?' · due '+esc(c.due):' · no date')+'</span></span></label>').join('')
+      +'</div>';
+  }
+  if(o.nextStep)h+='<div class="hl info"><i class="dot"></i><div><b>Next step:</b> '+esc(o.nextStep)+' <label style="margin-left:6px"><input type="checkbox" id="cvnext" checked> add as task</label></div></div>';
+  if(o.suggestedStage&&conv.kind==='clinic'&&o.suggestedStage!==conv.stage)
+    h+='<div class="hl warn"><i class="dot"></i><div>Move stage to <b>'+esc(o.suggestedStage)+'</b>? <label style="margin-left:6px"><input type="checkbox" id="cvstage"> yes</label></div></div>';
+  h+='<div class="mbtns"><button class="btn sec" onclick="renderConvInput()">← Redo</button><button class="btn" onclick="convSave()">Save to '+esc(conv.name.split(' ')[0])+' ✓</button></div>';
+  $('modal').innerHTML=h;
+}
+function convSave(){
+  const o=conv.out||{},obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
+  if(!obj)return;
+  obj.calls=obj.calls||[];
+  obj.calls.push({id:uid(),date:conv.date,src:conv.src,summary:o.summary||'',points:o.points||[],
+    objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||''});
+  let n=0;
+  (o.commitments||[]).forEach((c,i)=>{
+    const cb=$('cvc'+i);if(cb&&!cb.checked)return;
+    const mine=/vinay|me|i\b/i.test(c.who||'');
+    box().followups.push({id:uid(),text:c.what,who:mine?(conv.kind==='clinic'?(obj.doctors&&obj.doctors[0])||obj.name:obj.name):(c.who||obj.name),
+      due:c.due||'',time:'',repeat:'none',done:false,created:todayISO()});n++;
+  });
+  if($('cvnext')&&$('cvnext').checked&&o.nextStep){
+    S.sequence.push({id:uid(),title:o.nextStep,bucket:'now',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:conv.kind==='clinic'?obj.name:obj.name,done:false,created:todayISO()});
+  }
+  if($('cvstage')&&$('cvstage').checked&&o.suggestedStage&&conv.kind==='clinic'){
+    obj.stageHistory.push({date:todayISO(),stage:o.suggestedStage});
+    jlog('stage',obj.name+' → '+o.suggestedStage);
+    obj.stage=o.suggestedStage;
+    if(['Paying','Renewed'].includes(o.suggestedStage))celebrate();
+  }
+  (o.people||[]).forEach(pp=>{
+    if(!pp||!pp.name)return;
+    if(!S.people.some(x=>nameEq(x.name,pp.name))&&/^dr\.?\s/i.test(pp.name)){
+      const np={id:uid(),name:pp.name,role:pp.role||'Doctor',org:'',specialty:'',phone:'',city:obj.city||'',clinic:conv.kind==='clinic'?obj.name:'',source:'',influence:'',rel:'New',notes:'Mentioned in conversation '+fmtD(conv.date)};
+      S.people.push(np);linkPersonClinic(np);
+    }
+  });
+  jlog('call','Conversation logged — '+obj.name+(o.summary?': '+o.summary.slice(0,70):''),conv.date);
+  conv=null;closeModal();save();render();
+  toast('Saved'+(n?' · '+n+' follow-up'+(n>1?'s':'')+' created':''));
+}
+
 /* ---------- DAILY COACH ----------
    Layer 1: deterministic engine scores real opportunities using Vinay's own strategy rules.
    Layer 2: Gemini sequences + explains them, grounded ONLY in these facts (cannot invent).      */
@@ -1926,6 +2101,7 @@ function vClinicDetail(){
     [c.city,c.phone?'☎ reception '+esc(c.phone):'',c.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
+    +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log conversation</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="editClinic(\''+c.id+'\')">Edit</button></div>';
@@ -1941,8 +2117,9 @@ function vClinicDetail(){
   const ts=S.sequence.filter(t=>!t.done&&(t.link===c.name||(c.doctors||[]).some(d=>nameEq(d,t.link))));
   h+='<h2>Tasks <span class="cnt">'+ts.length+'</span></h2>';
   h+=ts.map(seqItem).join('')||'<div class="empty">None open.</div>';
-  h+='<h2>Visits <span class="cnt">'+c.visits.length+'</span></h2>';
-  h+=[...c.visits].reverse().map(v=>'<div class="item"><div class="t" style="font-weight:500">'+fmtD(v.date)+(v.time?' · '+v.time:'')+'</div>'+(v.note?'<div class="m">'+esc(v.note)+'</div>':'')+'</div>').join('')||'<div class="empty">No visits logged.</div>';
+  h+='<h2>History <span class="cnt">'+trailFor('clinic',c).length+'</span></h2>';
+  h+=relAnalysis('clinic',c);
+  h+='<div class="card">'+trailHTML('clinic',c)+'</div>';
   if(c.notes)h+='<h2>Notes</h2><div class="card"><div class="m" style="margin:0">'+esc(c.notes)+'</div></div>';
   return h;
 }
@@ -1958,6 +2135,7 @@ function vPersonDetail(){
     [p.city,p.phone?'📱 personal '+esc(p.phone):'',p.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button>'
+    +'<button class="btn sm sec" onclick="openConv(\'person\',\''+p.id+'\')">🎧 Log conversation</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="editPerson(\''+p.id+'\')">Edit</button></div>';
   h+='<h2>Clinics</h2>';
@@ -1968,10 +2146,13 @@ function vPersonDetail(){
   const ts=[...S.sequence,...S.me.sequence].filter(t=>!t.done&&nameEq(t.link,p.name));
   h+='<h2>Tasks <span class="cnt">'+ts.length+'</span></h2>';
   h+=ts.map(seqItem).join('')||'<div class="empty">None open.</div>';
+  h+='<h2>History <span class="cnt">'+trailFor('person',p).length+'</span></h2>';
+  h+=relAnalysis('person',p);
+  h+='<div class="card">'+trailHTML('person',p)+'</div>';
   const visits=[];
   S.clinics.filter(c=>clinicSet.has(c.name)).forEach(c=>c.visits.forEach(v=>visits.push({date:v.date,time:v.time||'',note:v.note,clinic:c.name})));
   visits.sort((a,b)=>b.date.localeCompare(a.date));
-  if(visits.length)h+='<h2>Visit history <span class="cnt">'+visits.length+'</span></h2>'+visits.map(v=>'<div class="item"><div class="t" style="font-weight:500">'+fmtD(v.date)+(v.time?' · '+v.time:'')+' · '+nameLink(v.clinic)+'</div>'+(v.note?'<div class="m">'+esc(v.note)+'</div>':'')+'</div>').join('');
+  if(visits.length)h+='<h2>Visits at their clinics <span class="cnt">'+visits.length+'</span></h2>'+visits.map(v=>'<div class="item"><div class="t" style="font-weight:500">'+fmtD(v.date)+(v.time?' · '+v.time:'')+' · '+nameLink(v.clinic)+'</div>'+(v.note?'<div class="m">'+esc(v.note)+'</div>':'')+'</div>').join('');
   if(p.notes)h+='<h2>Notes</h2><div class="card"><div class="m" style="margin:0">'+esc(p.notes)+'</div></div>';
   return h;
 }
@@ -2676,7 +2857,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='8.4';
+const APP_VERSION='8.5';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
