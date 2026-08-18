@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.5</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.6</span></div>
     <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
   </div>
   <nav id="nav"></nav>
@@ -350,7 +350,7 @@ async function initSync(silent){
     fb.db=F.getFirestore(fb.app);
     try{await F.enableIndexedDbPersistence(fb.db);}catch(e){}
     F.onAuthStateChanged(fb.auth,u=>{
-      if(u){fb.uid=u.uid;fb.ready=true;startListen();}
+      if(u){fb.uid=u.uid;fb.ready=true;startListen();setTimeout(()=>makeSnapshot(),4000);}
       else{fb.uid=null;fb.ready=false;if(fb.unsub){fb.unsub();fb.unsub=null;}setSyncStatus('off');}
       if(tab==='data')render();
     });
@@ -414,6 +414,49 @@ async function syncAuth(mode){
     toast('Signed in ✓');
     await initSync();
   }catch(e){alert('Sign-in failed: '+(e.code||'')+'\n'+e.message);}
+}
+/* ---- Snapshot history: one per day, keep last 14, restore any ---- */
+let snapList=null;
+async function makeSnapshot(force){
+  if(!fb.ready||!fb.uid)return;
+  const today=todayISO();
+  if(!force&&S.meta.lastSnap===today)return;
+  try{
+    const F=window.__fb;
+    await F.setDoc(F.doc(fb.db,'hq',fb.uid,'snaps',today),{payload:JSON.stringify(S),at:new Date().toISOString(),ver:APP_VERSION});
+    S.meta.lastSnap=today;localStorage.setItem(LS_KEY,JSON.stringify(S));
+    // prune: keep newest 14
+    const q=await F.getDocs(F.collection(fb.db,'hq',fb.uid,'snaps'));
+    const ids=q.docs.map(d=>d.id).sort();
+    if(ids.length>14){
+      const old=ids.slice(0,ids.length-14);
+      await Promise.all(old.map(id=>F.deleteDoc(F.doc(fb.db,'hq',fb.uid,'snaps',id))));
+    }
+    if(force)toast('Snapshot saved ✓');
+  }catch(e){if(force)toast('Snapshot failed: '+(e.code||e.message));}
+}
+async function loadSnaps(){
+  if(!fb.ready||!fb.uid){toast('Sign in to cloud sync first');return;}
+  try{
+    const F=window.__fb;
+    const q=await F.getDocs(F.collection(fb.db,'hq',fb.uid,'snaps'));
+    snapList=q.docs.map(d=>({id:d.id,at:d.data().at,ver:d.data().ver,payload:d.data().payload})).sort((a,b)=>b.id.localeCompare(a.id));
+    render();
+    if(!snapList.length)toast('No snapshots yet — one is created each day');
+  }catch(e){toast('Could not load snapshots: '+(e.code||e.message));}
+}
+function restoreSnap(id){
+  const s=snapList&&snapList.find(x=>x.id===id);if(!s)return;
+  if(!confirm('Restore your data as it was on '+fmtD(id)+'?\n\nThis replaces current data on ALL your devices. A safety snapshot of right now is taken first.'))return;
+  makeSnapshot(true).then(()=>{
+    try{
+      const d=JSON.parse(s.payload);
+      S=migrate(d);S.meta.rev=Date.now();
+      localStorage.setItem(LS_KEY,JSON.stringify(S));
+      cloudPush(true);
+      snapList=null;render();toast('Restored to '+fmtD(id)+' ✓');
+    }catch(e){alert('Restore failed: '+e.message);}
+  });
 }
 async function syncOut(){
   try{await window.__fb.signOut(fb.auth);toast('Signed out — local only now');render();}catch(e){toast('Sign out failed');}
@@ -1385,6 +1428,15 @@ function vData(){
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn sm sec" onclick="cloudPush(true)">Push now</button><button class="btn sm sec" onclick="syncOut()">Sign out</button></div>';
   }
   h+='</div>';
+  if(fb.uid){
+    h+='<h2>Snapshot history</h2><div class="card">'
+      +'<p style="font-size:13.5px;line-height:1.6">A snapshot of everything is saved automatically once a day (last 14 kept). Restore any day if something is lost or wrongly changed.</p>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0"><button class="btn sm sec" onclick="loadSnaps()">Show snapshots</button><button class="btn sm sec" onclick="makeSnapshot(true)">Snapshot now</button></div>';
+    if(snapList){
+      h+=snapList.length?snapList.map(s=>'<div class="item"><div class="irow"><div><div class="t" style="font-weight:500">'+fmtD(s.id)+'</div><div class="m">saved '+esc((s.at||'').slice(11,16))+' · v'+esc(s.ver||'?')+'</div></div><div class="acts"><button onclick="restoreSnap(\''+s.id+'\')">Restore</button></div></div></div>').join(''):'<div class="empty">No snapshots yet.</div>';
+    }
+    h+='</div>';
+  }
   h+='<h2>Backup & restore</h2><div class="card">'
     +'<p style="font-size:14px;line-height:1.6">Your data lives in this browser only. <b>Backup weekly.</b> Laptop \u2194 phone: Backup \u2192 send file to yourself on WhatsApp \u2192 open this HTML on the other device \u2192 Restore. For a Claude sync: drop the backup in the VRJ folder and say \u201cweekly sync\u201d.</p>'
     +'<div class="mbtns" style="max-width:420px"><button class="btn" onclick="doBackup()">\u2b07 Backup</button><button class="btn sec" onclick="$(\'restfile\').click()">Restore</button></div>'
@@ -1927,7 +1979,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='7.5';
+const APP_VERSION='7.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
