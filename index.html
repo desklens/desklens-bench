@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.6</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.7</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -1032,7 +1032,7 @@ async function aiFillForm(txt,kind,audioBlob){
   const parts=[{text:instr}];
   if(txt)parts.push({text:'\n\nDESCRIPTION: '+txt});
   if(audioBlob)parts.push({inline_data:{mime_type:(audioBlob.type||'audio/webm').split(';')[0],data:await fileToB64(audioBlob)}});
-  return await gemini(parts,{prefer:audioBlob?'gemini-2.5-flash':'gemini-2.5-flash-lite'});
+  return await gemini(parts,{prefer:'gemini-2.5-flash'});
 }
 function formSave(){
   clearTimeout(autoSaveT);autoSaveT=null;
@@ -1212,7 +1212,7 @@ async function aiClassify(txt){
     contents:[{parts:[{text:'You sort an Indian founder\'s voice dump into structured items. Today is '+todayISO()+' (India). Known clinics: '+S.clinics.map(c=>c.name).join('; ')+'. Known people: '+S.people.map(p=>p.name).join('; ')+'. Split the text into separate items. CLEANING RULE for "text": extract the fact, discard the phrasing — drop fillers ("remind me to", "I should", "I need to"), drop date/time words once captured in due/time, use concise imperative form, capitalize. Example: "Remind me to call Karthik tomorrow at 4 pm about repo access" → text "Call Karthik about repo access", due=tomorrow, time="16:00". Journal entries are the exception: keep them verbatim. For each return JSON: {"text": cleaned item per the rule, "type": "note"|"task"|"fu"|"journal"|"clinic"|"person"|"visit", "who": person name if fu else "", "due": "YYYY-MM-DD" if a day is implied else "", "time": "HH:MM" 24h if mentioned else "", "link": the EXACT known clinic/person name this item concerns else "", "name": for new clinic/person the proper name, "city": if mentioned, "doctor": doctor name for a new clinic if mentioned, "specialty": medical specialty if mentioned, "notes": for a new clinic/person, descriptive info worth remembering, cleaned (e.g. "He is a very reputed person") — NEVER the command phrasing}. Types: "fu"=follow-up/reminder with person or date; "task"=something to do; "journal"=personal reflection; "clinic"=a NEW clinic to add (not in known list); "person"=a NEW person met/to add (not in known list); "visit"=the founder physically visited a KNOWN clinic (set link; set due=visit date, time if said; text must contain ONLY what happened/was observed — never repeat the "I visited X at Y" phrasing; if nothing beyond the visit itself was said, text="Visit logged"); else "note". If an item concerns a doctor or person NOT in the known lists, still put their full name (with Dr. prefix if doctor) in "link" (for task/note) or "who" (for fu). Return ONLY a JSON array.\n\nTEXT:\n'+txt}]}],
     generationConfig:{temperature:0,responseMimeType:'application/json'}
   };
-  const arr=await gemini(body.contents[0].parts,{prefer:'gemini-2.5-flash-lite'});
+  const arr=await gemini(body.contents[0].parts,{prefer:'gemini-2.5-flash'});
   return arr.map(x=>({text:(x.text||'').trim(),type:['note','task','fu','journal','clinic','person','visit'].includes(x.type)?x.type:'note',who:x.who||'',due:x.due||'',time:x.time||'',link:x.link||'',name:x.name||'',city:x.city||'',doctor:x.doctor||'',specialty:x.specialty||'',noteTxt:x.notes||''})).filter(x=>x.text);
 }
 function parseTimeStr(lo){
@@ -2515,7 +2515,7 @@ function vData(){
     +'<p style="font-size:13.5px;line-height:1.6">Paste a free Gemini API key and Smart Dump upgrades from rule-based to real AI understanding of your voice. Get one in 2 minutes: <b>aistudio.google.com</b> → sign in → “Get API key” → Create → copy → paste below. The key lives only in this browser (and your backups).</p>'
     +'<div class="f" style="margin-top:10px"><label>Gemini API key</label><input id="aikey" type="password" value="'+esc(S.meta.aiKey||'')+'" placeholder="AIza…"></div>'
     +'<button class="btn sm" onclick="saveAIKey()">Save key</button> <button class="btn sm sec" onclick="testAI()">Test AI</button> '
-    +'<div class="note">Models used: <b>Gemini 2.5 Flash</b> for recordings, conversations and your daily plan · <b>Gemini 2.5 Flash-Lite</b> for quick extraction. Nothing older is used.'
+    +'<div class="note"><b>Gemini 2.5 Flash</b> is used for everything — recordings, conversations, voice fill and your daily plan (250 free requests a day, far above your usage). Flash-Lite steps in only if that daily cap is ever reached. Nothing older than 2.5 is used.'
     +(S.meta.aiModel?'<br>Currently answering: <b>'+esc(S.meta.aiModel)+'</b>':'')+'</div>'
     +'<span class="subtle">'+(S.meta.aiKey?'AI sorting is ON ✓':'AI sorting is OFF — using built-in rules')+'</span></div>';
   h+='<h2>How to use this app — the right order</h2><div class="card"><div style="font-size:13.5px;line-height:1.75;color:var(--ink)">'
@@ -3160,7 +3160,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.6';
+const APP_VERSION='9.7';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
