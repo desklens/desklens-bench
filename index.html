@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.0</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.1</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -742,6 +742,7 @@ const FORM_DEFS={
     title:'New clinic',
     fields:[
       {k:'name',l:'Clinic name',t:'text',req:true},
+
       {k:'doctor',l:'Doctor',t:'people',opts:()=>S.people.filter(p=>/doctor|design partner/i.test(p.role||'')).map(p=>p.name)},
       {k:'specialty',l:'Specialty',t:'chips',kind:'specialty'},
       {k:'city',l:'City',t:'chips',kind:'city'},
@@ -819,8 +820,7 @@ function renderForm(){
 let autoSaveT=null;
 function voiceAdd(kind){
   openForm(kind);
-  formVoice();
-  setTimeout(()=>toggleRec(),120);   // one tap: form opens, mic starts, stops on silence
+  formVoice();   // opens straight into the dictate box, cursor ready
 }
 function formSet(k,val){
   formReadDOM();
@@ -869,13 +869,9 @@ function formVoice(){
   $('modal').innerHTML='<h3>Speak once — I’ll fill every field</h3>'
     +'<div class="note" style="margin-bottom:8px">Say each field by name, in any order — e.g. <i>“clinic name Unicare Diagnostic Center, doctor Sushil Guttedar, specialty diagnostics…”</i>. Skip anything you don’t know.</div>'
     +'<div class="card" style="margin-bottom:10px;padding:12px"><div class="subtle" style="margin-bottom:4px">Say these:</div>'+checklist+'</div>'
-    +'<div class="card" style="text-align:center;padding:18px;margin-bottom:10px">'
-      +'<button class="btn" id="recbtn" onclick="toggleRec()" style="width:74px;height:74px;border-radius:99px;font-size:28px;padding:0">🎤</button>'
-      +'<div id="rectime" class="subtle" style="margin-top:8px">Tap to record · tap again to stop</div>'
-    +'</div>'
-    +'<div class="subtle" style="text-align:center;margin:6px 0">— or type / dictate with your keyboard mic —</div>'
-    +'<div class="f"><textarea id="vfx" style="min-height:90px" placeholder="Type or dictate the same details…"></textarea></div>'
-    +'<div class="mbtns"><button class="btn sec" onclick="stopRecSilent();renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
+    +'<div class="f"><textarea id="vfx" style="min-height:130px" placeholder="Tap here, then hit your keyboard mic and speak — or type."></textarea></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
+  setTimeout(()=>{const t=$('vfx');if(t)t.focus();},60);
 }
 async function toggleRec(){
   if(rec.mr&&rec.mr.state==='recording'){stopRec();return;}
@@ -1649,7 +1645,7 @@ const SPECS=['Dentistry','Dermatology','Skin Aesthetics','Ophthalmology','Orthop
 let pipeFilter='All';
 function vPipe(){
   let h='<div class="topbar"><div class="subtle">'+S.clinics.length+' clinics \u00b7 handset check is a hard gate before every demo</div>'
-    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'clinic\')">\ud83c\udfa4 Voice add</button><button class="btn sm sec" onclick="editClinic()">+ Add clinic</button></div></div>';
+    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'clinic\')">\ud83c\udfa4 Speak / dictate</button><button class="btn sm sec" onclick="editClinic()">+ Add clinic</button></div></div>';
   h+='<div class="filterrow">'+['All',...STAGES].map(s=>'<button class="'+(pipeFilter===s?'on':'')+'" onclick="setPF(\''+s.replace(/'/g,"\\'")+'\')">'+s+'</button>').join('')+'</div>';
   const list=S.clinics.filter(c=>pipeFilter==='All'||c.stage===pipeFilter);
   h+=list.length?list.map(c=>{
@@ -1680,7 +1676,7 @@ function setPF(s){pipeFilter=s;render();}
 
 function vPeople(){
   let h='<div class="topbar"><div class="subtle">Relationships are the moat \u2014 tier-2/3 field distribution network.</div>'
-    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'person\')">\ud83c\udfa4 Voice add</button><button class="btn sm sec" onclick="editPerson()">+ Add person</button></div></div>';
+    +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'person\')">\ud83c\udfa4 Speak / dictate</button><button class="btn sm sec" onclick="editPerson()">+ Add person</button></div></div>';
   h+=S.people.map(p=>{
     const fus=openFU().filter(f=>(f.who||'').toLowerCase()===p.name.toLowerCase());
     const infPill=p.influence?('<span class="pill '+(p.influence.startsWith('High')?'green':p.influence==='Medium'?'amber':'grey')+'">'+esc(p.influence.split(' \u2014')[0])+' influence</span>'):'';
@@ -1781,11 +1777,8 @@ function openConv(kind,id){
 function renderConvInput(){
   $('modal').innerHTML='<h3>Log a conversation — '+esc(conv.name)+'</h3>'
     +'<div class="note" style="margin-bottom:10px">Upload the call recording, or paste/dictate what was discussed. I’ll pull out the key points, promises and objections — you review before anything is saved.</div>'
-    +'<div class="card" style="text-align:center;padding:14px;margin-bottom:10px">'
-      +'<button class="btn" id="recbtn" onclick="toggleConvRec()" style="width:64px;height:64px;border-radius:99px;font-size:24px;padding:0">🎤</button>'
-      +'<div id="rectime" class="subtle" style="margin-top:6px">Tap to record what was discussed</div></div>'
-    +'<div class="subtle" style="text-align:center;margin:6px 0">— or upload / paste —</div>'
-    +'<div class="f"><label>Recording file (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
+    +'<div class="f"><label>Call recording file (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
+    +'<div class="subtle" style="text-align:center;margin:6px 0">— or —</div>'
     +'<div class="f"><label>What was discussed</label><textarea id="cvtxt" style="min-height:120px" placeholder="Dictate or paste the transcript…"></textarea></div>'
     +'<div class="f"><label>Date</label><input type="date" id="cvdate" value="'+todayISO()+'"></div>'
     +'<div class="mbtns"><button class="btn sec" onclick="closeModal();conv=null">Cancel</button><button class="btn" onclick="convRun()">Read it →</button></div>';
@@ -3021,7 +3014,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.0';
+const APP_VERSION='9.1';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
