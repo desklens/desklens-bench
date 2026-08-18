@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.0</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.2</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -209,7 +209,23 @@ const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
 function fmtD(iso){if(!iso)return'';const d=new Date(iso+'T00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});}
 function fmtDs(iso){if(!iso)return'';const d=new Date(iso+'T00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});}
-function daysAgo(iso){return Math.floor((new Date()-new Date(iso+'T00:00'))/(864e5));}
+const nowStamp=()=>new Date().toISOString();
+function hhmm(ts){if(!ts)return '';const d=new Date(ts);return isNaN(d)?'':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function whenLabel(dateISO,time,ts){
+  const t=time||hhmm(ts);
+  return fmtD(dateISO)+(t?' · '+t:'');
+}
+function normDate(v){
+  if(!v)return '';
+  const s=String(v).trim();
+  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);                       // 2026-08-18 or ISO datetime
+  if(m)return m[1]+'-'+m[2]+'-'+m[3];
+  m=s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);              // 18/08/2026
+  if(m)return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  const d=new Date(s);
+  return isNaN(d)?'':d.toISOString().slice(0,10);
+}
+function daysAgo(iso){return Math.floor((new Date()-new Date(normDate(iso)+'T00:00'))/(864e5));}
 function daysTo(iso){return Math.ceil((new Date(iso+'T00:00')-new Date())/(864e5));}
 function lakh(n){return n>=1e7?(n/1e7).toFixed(2)+' Cr':(n/1e5).toFixed(2)+' L';}
 
@@ -391,7 +407,7 @@ function downloadExport(){
   a.download='desklens-hq-export-'+todayISO()+'.json';a.click();URL.revokeObjectURL(a.href);
   toast('Export downloaded — this is the exact shape the server will receive');
 }
-function jlog(type,text,date){if(space!=='dl')return;S.journey.push({id:uid(),date:date||todayISO(),type,text});}
+function jlog(type,text,date){if(space!=='dl')return;S.journey.push({id:uid(),date:normDate(date)||todayISO(),ts:nowStamp(),type,text});}
 
 /* ================= CLOUD SYNC ================= */
 const CFG_KEY='dlhq_fbcfg';
@@ -1050,7 +1066,7 @@ function formSave(){
     if(c){Object.keys(v).forEach(k=>{if(k!=='doctor'&&v[k])c[k]=v[k];});doctors.forEach(dn=>{if(!c.doctors.some(x=>nameEq(x,dn)))c.doctors.push(dn);});toast(c.name+' updated ✓');}
     else{
       c={id:uid(),name:v.name.trim(),doctors,specialty:v.specialty||'Other',city:v.city||'',stage:v.stage||'Lead',source:v.source||'',phone:v.phone||'',reviews:v.reviews||'',whoAnswers:v.whoAnswers||'',whoAnswersPhone:v.whoAnswersPhone||'',brand:v.brand||'',handset:v.handset||'unverified',notes:v.notes||'',visits:[],stageHistory:[{date:todayISO(),stage:v.stage||'Lead'}]};
-      S.clinics.push(c);jlog('clinic',c.name+' added ('+c.stage+')');toast(c.name+' added ✓');
+      c.ts=nowStamp();S.clinics.push(c);jlog('clinic',c.name+' added ('+c.stage+')');toast(c.name+' added ✓');
     }
     const created=linkClinicDoctor(c);linkClinicStaff(c);
     if(created)setTimeout(()=>toast('Also added '+created+' to People ✓'),1800);
@@ -1127,7 +1143,7 @@ function clinicWizard(pre){
       toast(c.name+' updated (already existed) ✓');
     }else{
       c=Object.assign({id:uid(),name:'',doctors:[],specialty:'Other',city:'',stage:'Lead',source:'',phone:'',reviews:'',whoAnswers:'',whoAnswersPhone:'',brand:'',handset:'unverified',notes:'',visits:[],stageHistory:[]},v,{stageHistory:[{date:todayISO(),stage:v.stage||'Lead'}]});
-      S.clinics.push(c);jlog('clinic',v.name+' added ('+(v.stage||'Lead')+')');toast(v.name+' added ✓');
+      c.ts=nowStamp();S.clinics.push(c);jlog('clinic',v.name+' added ('+(v.stage||'Lead')+')');toast(v.name+' added ✓');
     }
     const created=linkClinicDoctor(c);
     linkClinicStaff(c);
@@ -1174,7 +1190,7 @@ function captureSave(){
   const txt=$('cap_text').value.trim();if(!txt)return;
   if(capType==='note'){box().inbox.unshift({id:uid(),text:txt,date:todayISO()});toast('In Inbox \u2014 sort later');}
   else if(capType==='task'){const ct=cleanEntry(txt,false)||txt;box().sequence.push({id:uid(),title:ct,bucket:'queued',trigger:'',notes:'',link:autoLink(txt),done:false,created:todayISO()});toast('Queued \u2713');}
-  else if(capType==='fu'){const cf=cleanEntry(txt,false)||txt;box().followups.push({id:uid(),text:cf,who:$('cap_who').value.trim(),due:$('cap_due').value,time:'',repeat:'none',done:false,created:todayISO()});toast('Follow-up saved \u2713');}
+  else if(capType==='fu'){const cf=cleanEntry(txt,false)||txt;box().followups.push({id:uid(),text:cf,who:$('cap_who').value.trim(),due:$('cap_due').value,time:'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});toast('Follow-up saved \u2713');}
   else if(capType==='journal'){S.me.journal.unshift({id:uid(),date:todayISO(),text:txt});toast('Journal entry saved \u2713');}
   else if(capType==='dump'){
     const guarded=txt.replace(/\b(Dr|Mr|Mrs|Ms|Prof|St|vs|etc|Rs|No)\./g,'$1');
@@ -1349,8 +1365,8 @@ function dumpSaveAll(){
   let n=0;
   pendingDump.forEach(it=>{
     if(!it.text)return;n++;
-    if(it.type==='task')box().sequence.push({id:uid(),title:it.text,bucket:'queued',trigger:'',notes:'',link:ensurePerson(it.link||autoLink(it.text),it.text),done:false,created:todayISO()});
-    else if(it.type==='fu')box().followups.push({id:uid(),text:it.text,who:ensurePerson(it.who,it.text),due:it.due,time:it.time||'',repeat:'none',done:false,created:todayISO()});
+    if(it.type==='task')box().sequence.push({id:uid(),title:it.text,bucket:'queued',trigger:'',notes:'',link:ensurePerson(it.link||autoLink(it.text),it.text),done:false,created:todayISO(),ts:nowStamp()});
+    else if(it.type==='fu')box().followups.push({id:uid(),text:it.text,who:ensurePerson(it.who,it.text),due:it.due,time:it.time||'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});
     else if(it.type==='journal')S.me.journal.unshift({id:uid(),date:todayISO(),text:it.text});
     else if(it.type==='clinic'){
       const nm=(it.name||it.text).trim();
@@ -1371,7 +1387,7 @@ function dumpSaveAll(){
       const cl=S.clinics.find(c=>c.name===it.link)||S.clinics.find(c=>c.name===autoLink(it.text));
       if(cl){
         const note=it.text==='Visit logged'?'':it.text;
-        cl.visits.push({date:it.due||todayISO(),time:it.time||'',note});
+        cl.visits.push({date:it.due||todayISO(),time:it.time||'',note,ts:nowStamp()});
         jlog('visit','Visited '+cl.name+(it.time?' at '+it.time:'')+(note?' — '+note.slice(0,80):''),it.due||todayISO());
       }
       else box().inbox.unshift({id:uid(),text:it.text,date:todayISO()});
@@ -1765,15 +1781,17 @@ function trailFor(kind,obj){
   const T=[];
   const names=kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name];
   const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
-  (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',type:'visit',title:'Visit',body:v.note||''}));
-  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:obj.id,ownerKind:kind}));
-  (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,type:'stage',title:'Stage → '+s.stage,body:''}));
+  (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',ts:v.ts,type:'visit',title:'Visit',body:v.note||''}));
+  (obj.calls||[]).forEach(c=>T.push({date:c.date,ts:c.ts,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:obj.id,ownerKind:kind}));
+  (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,ts:s.ts,type:'stage',title:'Stage → '+s.stage,body:''}));
   [...S.followups,...S.me.followups].forEach(f=>{
     if(!isMine(f.who))return;
-    T.push({date:f.created||f.due||'',type:'promise',title:(f.done?'Promise kept: ':'Promise: ')+f.text,body:f.due?('due '+fmtDs(f.due)):''});
+    T.push({date:f.created||f.due||'',ts:f.ts,type:'promise',title:(f.done?'Promise kept: ':'Promise: ')+f.text,body:f.due?('due '+fmtDs(f.due)):''});
   });
-  S.sequence.filter(t=>isMine(t.link)).forEach(t=>T.push({date:t.created||'',type:'task',title:(t.done?'Done: ':'Task: ')+t.title,body:t.notes||''}));
-  return T.filter(x=>x.date).sort((a,b)=>b.date.localeCompare(a.date)||(b.time||'').localeCompare(a.time||''));
+  S.sequence.filter(t=>isMine(t.link)).forEach(t=>T.push({date:t.created||'',ts:t.ts,type:'task',title:(t.done?'Done: ':'Task: ')+t.title,body:t.notes||''}));
+  return T.map((x,i)=>Object.assign(x,{date:normDate(x.date),_i:i}))
+    .filter(x=>x.date)
+    .sort((a,b)=>b.date.localeCompare(a.date)||(b.time||hhmm(b.ts)||'').localeCompare(a.time||hhmm(a.ts)||'')||b._i-a._i);
 }
 function trailHTML(kind,obj){
   const T=trailFor(kind,obj);
@@ -1785,7 +1803,7 @@ function trailHTML(kind,obj){
     if(m!==lastM){h+='<div class="tlmonth">'+m+'</div>';lastM=m;}
     h+='<div class="tle"><div class="tdot" style="background:'+(col[e.type]||'#78716C')+'"></div>'
       +'<div class="tt">'+esc(e.title)+'</div>'
-      +'<div class="tm">'+fmtD(e.date)+(e.time?' · '+esc(e.time):'')+'</div>'
+      +'<div class="tm">'+whenLabel(e.date,e.time,e.ts)+'</div>'
       +(e.body?'<div class="m">'+esc(e.body)+'</div>':'')
       +((e.points&&e.points.length)?'<div class="m">'+e.points.map(p=>'• '+esc(p)).join('<br>')+'</div>':'')
       +((e.objections&&e.objections.length)?'<div class="m"><span class="pill amber">objection</span> '+e.objections.map(esc).join(' · ')+'</div>':'')
@@ -1983,7 +2001,7 @@ function convSaveRaw(){
   const obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
   if(!obj)return;
   obj.calls=obj.calls||[];
-  obj.calls.push({id:uid(),date,src:'notes',summary:txt,points:[],objections:[],pricing:[],nextStep:'',sentiment:'',raw:true,tags:ruleTags(txt)});
+  obj.calls.push({id:uid(),date,ts:nowStamp(),src:'notes',summary:txt,points:[],objections:[],pricing:[],nextStep:'',sentiment:'',raw:true,tags:ruleTags(txt)});
   jlog('call','Conversation noted — '+obj.name+': '+txt.slice(0,70),date);
   conv=null;closeModal();save();render();
   toast('Notes saved to the trail ✓ — analyse later from the clinic page');
@@ -2012,7 +2030,7 @@ function convSave(){
   const o=conv.out||{},obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
   if(!obj)return;
   obj.calls=obj.calls||[];
-  obj.calls.push({id:uid(),date:conv.date,src:conv.src,summary:o.summary||'',points:o.points||[],
+  obj.calls.push({id:uid(),date:conv.date,ts:nowStamp(),src:conv.src,summary:o.summary||'',points:o.points||[],
     objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||'',
     tags:convTagsFrom(o)});
   let n=0;
@@ -2026,7 +2044,7 @@ function convSave(){
     S.sequence.push({id:uid(),title:o.nextStep,bucket:'now',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:conv.kind==='clinic'?obj.name:obj.name,done:false,created:todayISO()});
   }
   if($('cvstage')&&$('cvstage').checked&&o.suggestedStage&&conv.kind==='clinic'){
-    obj.stageHistory.push({date:todayISO(),stage:o.suggestedStage});
+    obj.stageHistory.push({date:todayISO(),ts:nowStamp(),stage:o.suggestedStage});
     jlog('stage',obj.name+' → '+o.suggestedStage);
     obj.stage=o.suggestedStage;
     if(['Paying','Renewed'].includes(o.suggestedStage))celebrate();
@@ -2542,7 +2560,11 @@ function vIns(){
   h+='</div>';
   // timeline
   h+='<h2>Journey timeline</h2><div class="card"><div class="tl">';
-  const evts=[...S.journey].sort((a,b)=>b.date.localeCompare(a.date));
+  const evts=[...S.journey]
+    .map((e,i)=>({e,i,d:normDate(e.date)}))
+    .filter(x=>x.d)
+    .sort((a,b)=>b.d.localeCompare(a.d)||String(b.e.ts||'').localeCompare(String(a.e.ts||''))||b.i-a.i)
+    .map(x=>Object.assign({},x.e,{date:x.d}));
   const tcol={milestone:'#B45309',decision:'#0F766E',clinic:'#6D28D9',stage:'#0369A1',visit:'#BE185D',done:'#4D7C0F',resolved:'#0F766E'};
   const tname={milestone:'Milestone',decision:'Decision',clinic:'Clinic',stage:'Stage change',visit:'Visit',done:'Completed',resolved:'Resolved'};
   let lastM='';
@@ -2551,7 +2573,7 @@ function vIns(){
     if(m!==lastM){h+='<div class="tlmonth">'+m+'</div>';lastM=m;}
     h+='<div class="tle"><div class="tdot" style="background:'+(tcol[e.type]||'#78716C')+'"></div>'
       +'<div class="tt">'+esc(e.text)+'</div>'
-      +'<div class="tm">'+fmtD(e.date)+' \u00b7 '+(tname[e.type]||e.type)+'</div></div>';
+      +'<div class="tm">'+whenLabel(e.date,'',e.ts)+' \u00b7 '+(tname[e.type]||e.type)+'</div></div>';
   });
   h+='</div></div>';
   return h;
@@ -2952,7 +2974,7 @@ function editFU(id,sp){
     if(!v.text)return;
     const who=v.who||v.whoSel;
     if(id)Object.assign(f,{text:v.text,who,due:v.due,time:v.time,repeat:v.repeat});
-    else b.followups.push({id:uid(),done:false,created:todayISO(),text:v.text,who,due:v.due,time:v.time,repeat:v.repeat});
+    else b.followups.push({id:uid(),done:false,created:todayISO(),ts:nowStamp(),text:v.text,who,due:v.due,time:v.time,repeat:v.repeat});
     save();render();
   },id?()=>{b.followups=b.followups.filter(x=>x.id!==id);save();render();}:null);
 }
@@ -3037,7 +3059,7 @@ function addTaskFor(id,kind){
     {key:'notes',label:'Notes (optional)',type:'textarea',value:''}
   ],v=>{
     if(!v.title)return;
-    S.sequence.push({id:uid(),title:cleanEntry(v.title,false)||v.title,bucket:v.bucket,trigger:'',notes:v.notes,link:o.name,done:false,created:todayISO()});
+    S.sequence.push({id:uid(),title:cleanEntry(v.title,false)||v.title,bucket:v.bucket,trigger:'',notes:v.notes,link:o.name,done:false,created:todayISO(),ts:nowStamp()});
     save();render();toast('Task added → '+o.name+' ✓');
   },null,'Add task');
 }
@@ -3048,7 +3070,7 @@ function addFUfor(id,kind){
     {key:'due',label:'Due date',type:'date',value:todayISO()}
   ],v=>{
     if(!v.text)return;
-    box().followups.push({id:uid(),text:v.text,who:o?((o.doctors&&o.doctors[0])||o.name):'',due:v.due,time:'',repeat:'none',done:false,created:todayISO()});
+    box().followups.push({id:uid(),text:v.text,who:o?((o.doctors&&o.doctors[0])||o.name):'',due:v.due,time:'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});
     save();render();toast('Follow-up \u2713');
   });
 }
@@ -3059,7 +3081,7 @@ function logVisit(id){
     {key:'time',label:'Time (optional)',type:'time',value:''},
     {key:'note',label:'What happened? Promises made?',type:'textarea',value:''}
   ],v=>{
-    c.visits.push({date:v.date,time:v.time||'',note:v.note});
+    c.visits.push({date:v.date,time:v.time||'',note:v.note,ts:nowStamp()});
     jlog('visit','Visited '+c.name+(v.time?' at '+v.time:'')+(v.note?' \u2014 '+v.note.slice(0,80):''),v.date);
     save();render();toast('Visit logged \u2713');
   },null,'Log visit');
@@ -3093,7 +3115,7 @@ function editSeq(id){
   ],v=>{
     if(!v.title)return;
     if(v.link==='\u2014 none \u2014')v.link='';
-    if(id){Object.assign(x,v);}else{box().sequence.push(Object.assign({id:uid(),done:false,created:todayISO()},v));}
+    if(id){Object.assign(x,v);}else{box().sequence.push(Object.assign({id:uid(),done:false,created:todayISO(),ts:nowStamp()},v));}
     save();render();
   },id?()=>{box().sequence=box().sequence.filter(s=>s.id!==id);save();render();}:null);
 }
@@ -3143,7 +3165,7 @@ function editClinic(id){
     Object.assign(c,v);
     renameClinicRefs(oldName,c.name);
     if(v.stage!==oldStage){
-      c.stageHistory.push({date:todayISO(),stage:v.stage});jlog('stage',c.name+' \u2192 '+v.stage);
+      c.stageHistory.push({date:todayISO(),ts:nowStamp(),stage:v.stage});jlog('stage',c.name+' \u2192 '+v.stage);
       if(v.stage==='Paying'||v.stage==='Renewed')celebrate();
     }
     linkClinicDoctor(c);
@@ -3273,7 +3295,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='10.0';
+const APP_VERSION='10.2';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
