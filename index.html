@@ -174,9 +174,14 @@ body.nav-top header nav{display:flex!important}
   main{padding:12px calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left))}
   .modal{max-height:92vh;border-radius:22px 22px 0 0;padding-top:10px}
   .modal:before{content:'';display:block;width:38px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 12px}
-  .acts button{padding:8px 13px;font-size:12.5px;min-height:34px}
+  .irow{flex-direction:column;align-items:stretch;gap:0}
+  .irow>div{width:100%;min-width:0}
+  .acts{width:100%;justify-content:flex-start;flex-wrap:wrap;margin-top:9px}
+  .acts button{flex:0 0 auto;padding:8px 13px;font-size:12.5px;min-height:34px}
   .sqa button{padding:6px 11px;font-size:12px}
+  .sqa{margin-top:6px}
   .item{padding:13px 14px;border-radius:14px}
+  .item .t{font-size:15px}
   .item:active{transform:scale(.985);background:#FCFBF8}
   .card{padding:13px}
   h2{font-size:17.5px;margin:18px 0 8px}
@@ -231,15 +236,9 @@ body.nav-top header nav{display:flex!important}
   .modal h3{font-size:16px}
   .f label{font-size:11.5px}
   .subtle,.note{font-size:11.5px}
-  .irow{flex-wrap:wrap}
-  .acts{width:100%;justify-content:flex-end;margin-top:8px}
-  .sqa{justify-content:flex-end;margin-top:6px}
-  .grid.g4{grid-template-columns:1fr 1fr}
-  .greet{font-size:21px}
   .cols{gap:10px}
   .colh{margin-top:4px}
   .filterrow{gap:5px}
-  .btn{padding:10px 14px}
   nav button{padding:10px 11px;font-size:13.5px}
 }
 [draggable=true]{cursor:grab}
@@ -294,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.6</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.8</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -3446,7 +3445,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='10.6';
+const APP_VERSION='10.8';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
