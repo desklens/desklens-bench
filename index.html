@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.8</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.9</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -1766,7 +1766,7 @@ function trailFor(kind,obj){
   const names=kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name];
   const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
   (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',type:'visit',title:'Visit',body:v.note||''}));
-  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||''}));
+  (obj.calls||[]).forEach(c=>T.push({date:c.date,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[]}));
   (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,type:'stage',title:'Stage → '+s.stage,body:''}));
   [...S.followups,...S.me.followups].forEach(f=>{
     if(!isMine(f.who))return;
@@ -1791,6 +1791,7 @@ function trailHTML(kind,obj){
       +((e.objections&&e.objections.length)?'<div class="m"><span class="pill amber">objection</span> '+e.objections.map(esc).join(' · ')+'</div>':'')
       +((e.pricing&&e.pricing.length)?'<div class="m"><span class="pill">pricing</span> '+e.pricing.map(esc).join(' · ')+'</div>':'')
       +(e.next?'<div class="m"><b>Next:</b> '+esc(e.next)+'</div>':'')
+      +tagPills(e.tags)
       +'</div>';
   });
   return h+'</div>';
@@ -1827,6 +1828,43 @@ function relAnalysis(kind,obj){
   if(objs.length)h+='<div class="m" style="margin-top:8px"><b>Recurring objections:</b> '+objs.slice(0,4).map(esc).join(' · ')+'</div>';
   if(prices.length)h+='<div class="m"><b>Pricing signals:</b> '+prices.slice(0,4).map(esc).join(' · ')+'</div>';
   return h+'</div>';
+}
+
+/* ---------- CONVERSATION TAGS: turn talk into buckets ---------- */
+const CONV_TAGS=['Profile','Feature request','Pricing','Objection','Recordings shared','Referral','Competitor','Consent / DPDP','Handset','Demo / audit','Commitment','Timing','Renewal risk','Intro'];
+const TAG_RULES=[
+ ['Feature request',/\b(want|wants|wanted|needs?|asking for|requirement|feature|integration|whatsapp|reminder engine|follow ?up engine|dashboard)\b/i],
+ ['Pricing',/\b(price|pricing|cost|rate|₹|rs\.?|budget|quote|quoted|discount|per month|willing to (spend|pay)|invest)\b/i],
+ ['Objection',/\b(worried|concern|hesitant|not sure|doubt|expensive|too high|later|after diwali|no need|already have)\b/i],
+ ['Recordings shared',/\b(recording|recordings|audio|shared calls?|sample calls?|call data)\b/i],
+ ['Referral',/\b(refer|referral|introduce|introduction|recommend|association|IMA|network|connect me)\b/i],
+ ['Competitor',/\b(competitor|another vendor|other company|bengaluru vendor|alternative|comparing)\b/i],
+ ['Consent / DPDP',/\b(consent|privacy|dpdp|legal|patient data|recording permission)\b/i],
+ ['Handset',/\b(phone|handset|samsung|vivo|oppo|realme|redmi|motorola|pixel|iphone|record unknown|call recording setting)\b/i],
+ ['Demo / audit',/\b(demo|audit|trial|pilot|test|show(ed|ing)? (the|him|her)|7[- ]day)\b/i],
+ ['Profile',/\b(reputed|top \d|senior|runs|practice since|years of|specialis|association|friendly|supports? (his|her) (staff|front desk))\b/i],
+ ['Timing',/\b(next week|next month|after|diwali|festival|busy season|come back|revisit|month end)\b/i],
+ ['Renewal risk',/\b(cancel|stop|not using|unhappy|complaint|not working|drop)\b/i],
+ ['Intro',/\b(first meeting|introduce|introduction|met for the first time|reach out|pitch)\b/i]
+];
+function ruleTags(text){
+  const t=[];
+  TAG_RULES.forEach(([tag,re])=>{if(re.test(text||''))t.push(tag);});
+  return [...new Set(t)].slice(0,4);
+}
+function convTagsFrom(o){
+  const blob=[o.summary,(o.points||[]).join(' '),(o.objections||[]).join(' '),(o.pricing||[]).join(' '),o.nextStep].join(' ');
+  const fromAI=(o.tags||[]).filter(t=>CONV_TAGS.includes(t));
+  const merged=[...new Set([...fromAI,...ruleTags(blob)])];
+  if(o.objections&&o.objections.length&&!merged.includes('Objection'))merged.push('Objection');
+  if(o.pricing&&o.pricing.length&&!merged.includes('Pricing'))merged.push('Pricing');
+  if(o.commitments&&o.commitments.length&&!merged.includes('Commitment'))merged.push('Commitment');
+  return merged.slice(0,5);
+}
+function tagPills(tags){
+  if(!tags||!tags.length)return '';
+  const col={'Feature request':'violet','Pricing':'','Objection':'amber','Renewal risk':'red','Referral':'green','Recordings shared':'green','Consent / DPDP':'amber','Competitor':'red'};
+  return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'+tags.map(t=>'<span class="pill '+(col[t]||'grey')+'">'+esc(t)+'</span>').join('')+'</div>';
 }
 
 /* ---------- CONVERSATION IMPORT (audio or transcript) ---------- */
@@ -1876,6 +1914,7 @@ async function convRun(){
     +'"commitments":[{"who":"Vinay or their name","what":"promise","due":"YYYY-MM-DD or empty"}],'
     +'"objections":["pushback in their words"],"pricing":["price/budget/competitor mentions"],'
     +'"people":[{"name":"","role":""}],"nextStep":"clearest next action",'
+    +'"tags":["pick 1-4 from: '+CONV_TAGS.join(', ')+'"],'
     +'"suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|","sentimentNote":"one line on how warm or hesitant"}';
   try{
     const parts=[{text:instruction}];
@@ -1907,7 +1946,7 @@ function convSaveRaw(){
   const obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
   if(!obj)return;
   obj.calls=obj.calls||[];
-  obj.calls.push({id:uid(),date,src:'notes',summary:txt,points:[],objections:[],pricing:[],nextStep:'',sentiment:'',raw:true});
+  obj.calls.push({id:uid(),date,src:'notes',summary:txt,points:[],objections:[],pricing:[],nextStep:'',sentiment:'',raw:true,tags:ruleTags(txt)});
   jlog('call','Conversation noted — '+obj.name+': '+txt.slice(0,70),date);
   conv=null;closeModal();save();render();
   toast('Notes saved to the trail ✓ — analyse later from the clinic page');
@@ -1937,7 +1976,8 @@ function convSave(){
   if(!obj)return;
   obj.calls=obj.calls||[];
   obj.calls.push({id:uid(),date:conv.date,src:conv.src,summary:o.summary||'',points:o.points||[],
-    objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||''});
+    objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||'',
+    tags:convTagsFrom(o)});
   let n=0;
   (o.commitments||[]).forEach((c,i)=>{
     const cb=$('cvc'+i);if(cb&&!cb.checked)return;
@@ -2152,6 +2192,9 @@ const PRESETS=[
   {n:'Never visited',b:'clinics',f:{staleDays:'never'}},
   {n:'High-influence people',b:'people',f:{influence:'High — can open doors'}},
   {n:'Champions & strong relationships',b:'people',f:{rel:'Champion'}},
+  {n:'Feature requests from the field',b:'convs',f:{tag:'Feature request'}},
+  {n:'Pricing signals',b:'convs',f:{tag:'Pricing'}},
+  {n:'Objections heard',b:'convs',f:{tag:'Objection'}},
   {n:'Overdue follow-ups',b:'followups',f:{due:'overdue'}},
   {n:'Open tasks in Now',b:'tasks',f:{bucket:'now'}}
 ];
@@ -2199,6 +2242,17 @@ function repRows(){
       return true;
     }).map(x=>({id:x.f.id,type:'fu',cols:[x.f.text,x.f.who||'—',x.f.due?fmtDs(x.f.due):'no date',x.f.time||'—',x.sp==='dl'?'DeskLens':'Personal',x.f.repeat&&x.f.repeat!=='none'?x.f.repeat:'—']}));
   }
+  if(rep.base==='convs'){
+    const rows=[];
+    S.clinics.forEach(c=>(c.calls||[]).forEach(v=>rows.push({who:c.name,id:c.id,type:'clinic',v})));
+    S.people.forEach(p=>(p.calls||[]).forEach(v=>rows.push({who:p.name,id:p.id,type:'person',v})));
+    return rows.filter(r=>{
+      if(f.tag&&!(r.v.tags||[]).includes(f.tag))return false;
+      if(f.days&&daysAgo(r.v.date)>parseInt(f.days))return false;
+      return true;
+    }).sort((a,b)=>b.v.date.localeCompare(a.v.date))
+      .map(r=>({id:r.id,type:r.type,cols:[fmtDs(r.v.date),r.who,(r.v.tags||[]).join(', ')||'—',(r.v.summary||'').slice(0,90),r.v.nextStep||'—']}));
+  }
   // tasks
   const all=[...S.sequence.map(t=>({t,sp:'DeskLens'})),...S.me.sequence.map(t=>({t,sp:'Personal'}))];
   return all.filter(({t})=>{
@@ -2212,6 +2266,7 @@ function repRows(){
 const REP_COLS={clinics:['Clinic','Stage','Specialty','City','Doctors','Brand','Recording','Reviews','Last visit'],
   people:['Name','Role','Specialty','Clinic','City','Phone','Influence','Relationship'],
   followups:['Follow-up','With','Due','Time','Space','Repeat'],
+  convs:['Date','With','Tags','What was said','Next step'],
   tasks:['Task','Bucket','Linked to','Space','Trigger']};
 function setRepBase(b){rep={base:b,f:{}};render();}
 function setRepF(k,v){if(v==='')delete rep.f[k];else rep.f[k]=v;render();}
@@ -2225,7 +2280,7 @@ function repSel(k,label,opts,extra){
 function vReports(){
   const rows=repRows(),cols=REP_COLS[rep.base];
   let h='<div class="topbar"><div class="subtle">Build any view of your data. Tap a row to open it.</div><button class="btn sm sec" onclick="repCSV()">⬇ Export CSV</button></div>';
-  h+='<div class="chips">'+[['clinics','Clinics'],['people','People'],['followups','Follow-ups'],['tasks','Tasks']].map(b=>'<button class="'+(rep.base===b[0]?'on':'')+'" onclick="setRepBase(\''+b[0]+'\')">'+b[1]+'</button>').join('')+'</div>';
+  h+='<div class="chips">'+[['clinics','Clinics'],['people','People'],['convs','Conversations'],['followups','Follow-ups'],['tasks','Tasks']].map(b=>'<button class="'+(rep.base===b[0]?'on':'')+'" onclick="setRepBase(\''+b[0]+'\')">'+b[1]+'</button>').join('')+'</div>';
   h+='<div class="card" style="margin-bottom:12px"><div class="subtle" style="margin-bottom:6px">Quick reports</div><div class="filterrow">'
     +PRESETS.map((p,i)=>'<button onclick="applyPreset('+i+')">'+esc(p.n)+'</button>').join('')+'</div></div>';
   h+='<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:10px;flex-wrap:wrap">';
@@ -2243,6 +2298,9 @@ function vReports(){
       +repSel('influence','Influence',optList('influence'))
       +repSel('rel','Relationship',optList('rel'))
       +repSel('specialty','Specialty',optList('specialty'))+repSel('city','City',optList('city'))+repSel('source','Source',optList('source'));
+  }else if(rep.base==='convs'){
+    const used=[...new Set([].concat(...S.clinics.map(c=>[].concat(...(c.calls||[]).map(v=>v.tags||[]))),...S.people.map(p=>[].concat(...(p.calls||[]).map(v=>v.tags||[])))))];
+    h+=repSel('tag','Topic',used.length?used:CONV_TAGS)+repSel('days','In the last',['7','30','90']);
   }else if(rep.base==='followups'){
     h+=repSel('space','Space',['dl','me'])+repSel('due','Due',['overdue','week','none'])+repSel('who','With',whoOptions().filter(Boolean));
   }else{
@@ -3176,7 +3234,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.8';
+const APP_VERSION='9.9';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
