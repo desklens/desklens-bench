@@ -186,8 +186,11 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v7.6</span></div>
-    <div style="display:flex;align-items:center;gap:12px"><div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.2</span></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
+      <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
+    </div>
   </div>
   <nav id="nav"></nav>
 </header>
@@ -304,7 +307,29 @@ function migrate(d){
   if(d.meta.pilotMode===undefined)d.meta.pilotMode=true;
   if(d.meta.pilotNudged===undefined)d.meta.pilotNudged=false;
   if(d.meta.rev===undefined)d.meta.rev=0;
+  if(!d.meta.hook)d.meta.hook={url:'',secret:'',on:false,lastAt:'',lastErr:''};
+  if(!d.meta.custom)d.meta.custom={};
   return d;
+}
+/* ---- Option lists: built-in + anything Vinay adds, remembered forever ---- */
+const ROLES=['Doctor','Design Partner','Design Partner / Referral','Receptionist / staff','Association contact','Commission partner','Official (KPME/IMA/DHO)','Co-founder','Vendor','Friend / personal','Other'];
+const INFLUENCES=['High — can open doors','Medium','Low / not relevant'];
+const RELS=['New','Warm','Strong','Champion','Cold / lapsed'];
+function baseList(kind){
+  return {specialty:SPECS,city:CITIES,source:SOURCES,brand:BRANDS.filter(b=>b),role:ROLES,stage:STAGES,influence:INFLUENCES,rel:RELS}[kind]||[];
+}
+function optList(kind){
+  const custom=(S.meta.custom&&S.meta.custom[kind])||[];
+  return [...new Set([...baseList(kind),...custom])];
+}
+function addCustom(kind,val){
+  val=(val||'').trim();if(!val)return '';
+  if(!S.meta.custom)S.meta.custom={};
+  const cur=S.meta.custom[kind]||[];
+  if(!baseList(kind).some(x=>x.toLowerCase()===val.toLowerCase())&&!cur.some(x=>x.toLowerCase()===val.toLowerCase())){
+    S.meta.custom[kind]=[...cur,val];save();toast('“'+val+'” added — it’ll be in this list from now on');
+  }
+  return val;
 }
 let space='dl';
 function box(){return space==='dl'?S:S.me;}
@@ -317,7 +342,52 @@ function load(){
 function save(opts){
   if(!opts||!opts.fromCloud){S.meta.rev=Date.now();}
   localStorage.setItem(LS_KEY,JSON.stringify(S));
-  if(!opts||!opts.fromCloud)cloudPush();
+  if(!opts||!opts.fromCloud){cloudPush();hookPush();}
+}
+/* ---- Outbound integration: push to the DeskLens main server when switched on ---- */
+let hookT=null;
+function hqExport(){
+  return {
+    schema:'desklens-hq/1',
+    version:APP_VERSION,
+    rev:S.meta.rev,
+    exportedAt:new Date().toISOString(),
+    owner:(fb.auth&&fb.auth.currentUser&&fb.auth.currentUser.email)||'',
+    clinics:S.clinics,people:S.people,sequence:S.sequence,followups:S.followups,
+    decisions:S.decisions,questions:S.questions,journey:S.journey,inbox:S.inbox,
+    personal:{sequence:S.me.sequence,followups:S.me.followups,goals:S.me.goals,routines:S.me.routines}
+  };
+}
+async function hookSend(silent){
+  const h=S.meta.hook;
+  if(!h||!h.on||!h.url)return;
+  try{
+    const r=await fetch(h.url,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},h.secret?{'X-HQ-Secret':h.secret}:{}),body:JSON.stringify(hqExport())});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    S.meta.hook.lastAt=new Date().toISOString();S.meta.hook.lastErr='';
+    localStorage.setItem(LS_KEY,JSON.stringify(S));
+    if(!silent)toast('Sent to server ✓');
+    if(tab==='data')render();
+  }catch(e){
+    S.meta.hook.lastErr=String(e.message||e);
+    localStorage.setItem(LS_KEY,JSON.stringify(S));
+    if(!silent)toast('Server push failed: '+S.meta.hook.lastErr);
+  }
+}
+function hookPush(){
+  const h=S.meta.hook;
+  if(!h||!h.on||!h.url)return;
+  clearTimeout(hookT);hookT=setTimeout(()=>hookSend(true),4000);
+}
+function saveHook(){
+  S.meta.hook={url:$('hkurl').value.trim(),secret:$('hksec').value.trim(),on:$('hkon').value==='yes',lastAt:S.meta.hook.lastAt||'',lastErr:''};
+  save();render();toast(S.meta.hook.on?'Integration ON':'Integration saved (off)');
+}
+function downloadExport(){
+  const blob=new Blob([JSON.stringify(hqExport(),null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='desklens-hq-export-'+todayISO()+'.json';a.click();URL.revokeObjectURL(a.href);
+  toast('Export downloaded — this is the exact shape the server will receive');
 }
 function jlog(type,text,date){if(space!=='dl')return;S.journey.push({id:uid(),date:date||todayISO(),type,text});}
 
@@ -466,7 +536,14 @@ async function syncOut(){
 function openModal(title,fields,onSave,delOpt,saveLabel){
   const m=$('modal');
   m.innerHTML='<h3>'+esc(title)+'</h3>'+fields.map(f=>{
-    if(f.type==='select')return '<div class="f"><label>'+esc(f.label)+'</label><select id="mf_'+f.key+'">'+f.options.map(o=>'<option value="'+esc(o)+'"'+(o===f.value?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select></div>';
+    if(f.type==='select'){
+      const list=f.kind?[...(f.allowBlank?['']:[]),...optList(f.kind)]:f.options;
+      const full=list.includes(f.value)?list:[f.value,...list];
+      return '<div class="f"><label>'+esc(f.label)+'</label><select id="mf_'+f.key+'"'+(f.kind?' onchange="modalNewOpt(this,\''+f.kind+'\')"':'')+'>'
+        +full.map(o=>'<option value="'+esc(o)+'"'+(o===f.value?' selected':'')+'>'+esc(o)+'</option>').join('')
+        +(f.kind?'<option value="__new__">＋ Add new…</option>':'')
+        +'</select></div>';
+    }
     if(f.type==='textarea')return '<div class="f"><label>'+esc(f.label)+'</label><textarea id="mf_'+f.key+'">'+esc(f.value||'')+'</textarea></div>';
     if(f.type==='tags'){
       const cur=(f.value||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
@@ -483,6 +560,16 @@ function openModal(title,fields,onSave,delOpt,saveLabel){
   if(delOpt)$('mdel').onclick=()=>{if(confirm('Delete this item?')){delOpt();closeModal();}};
   $('overlay').classList.add('open');
   const first=m.querySelector('input,textarea');if(first&&window.innerWidth>700)first.focus();
+}
+function modalNewOpt(sel,kind){
+  if(sel.value!=='__new__')return;
+  const v=prompt('Add a new '+kind.replace('rel','relationship')+':');
+  const val=v&&v.trim()?addCustom(kind,v):'';
+  if(val){
+    const o=document.createElement('option');o.value=val;o.textContent=val;
+    sel.insertBefore(o,sel.querySelector('option[value="__new__"]'));
+    sel.value=val;
+  }else{sel.selectedIndex=0;}
 }
 function closeModal(){$('overlay').classList.remove('open');}
 function tagToggle(key,btn){
@@ -505,9 +592,13 @@ function linkClinicDoctor(c){
       p={id:uid(),name:dname,role:'Doctor',org:'',specialty:c.specialty||'',phone:'',city:c.city||'',clinic:c.name,source:c.source||'',influence:'',rel:'New',notes:'Auto-created from clinic '+c.name};
       S.people.push(p);created.push(p.name);
     }else{
+      // person exists — fill blanks on BOTH sides
       if(!p.clinic)p.clinic=c.name;
-      if(!p.specialty&&c.specialty)p.specialty=c.specialty;
+      if(!p.specialty&&c.specialty&&c.specialty!=='Other')p.specialty=c.specialty;
       if(!p.city&&c.city)p.city=c.city;
+      if((!c.specialty||c.specialty==='Other')&&p.specialty)c.specialty=p.specialty;
+      if(!c.city&&p.city)c.city=p.city;
+      if(!c.source&&p.source)c.source=p.source;
     }
   });
   return created.length?created.join(', '):null;
@@ -532,9 +623,13 @@ function linkPersonClinic(p){
     const c=S.clinics.find(x=>x.name===p.clinic);
     if(c){
       if(/doctor|design partner/i.test(p.role||'')&&!(c.doctors||[]).some(d=>nameEq(d,p.name)))c.doctors.push(p.name);
+      // fill blanks in both directions
       if((!c.specialty||c.specialty==='Other')&&p.specialty)c.specialty=p.specialty;
+      if(!c.city&&p.city)c.city=p.city;
+      if(!c.source&&p.source)c.source=p.source;
       if(!p.city&&c.city)p.city=c.city;
-      if(!p.specialty&&c.specialty)p.specialty=c.specialty;
+      if(!p.specialty&&c.specialty&&c.specialty!=='Other')p.specialty=c.specialty;
+      if(!p.source&&c.source)p.source=c.source;
     }
   }
 }
@@ -554,7 +649,11 @@ function renderWizard(){
   const f=wiz.fields[wiz.step];
   let inputHtml='';
   if(f.type==='select'){
-    inputHtml='<div class="chips" style="margin-top:8px;max-height:40vh;overflow-y:auto">'+f.options.filter(o=>o!==''&&o!=='— none —').map(o=>'<button class="'+(wiz.vals[f.key]===o?'on':'')+'" onclick="wizPick(this.textContent)">'+esc(o)+'</button>').join('')+'</div>';
+    const list=f.kind?optList(f.kind):f.options;
+    inputHtml='<div class="chips" style="margin-top:8px;max-height:40vh;overflow-y:auto">'
+      +list.filter(o=>o!==''&&o!=='— none —').map(o=>'<button class="'+(wiz.vals[f.key]===o?'on':'')+'" onclick="wizPick(this.textContent)">'+esc(o)+'</button>').join('')
+      +(f.kind?'<button style="border-style:dashed;border-color:var(--teal);color:var(--teal)" onclick="wizNewOpt(\''+f.kind+'\')">＋ Add new…</button>':'')
+      +'</div>';
   }else if(f.type==='multicombo'){
     const sel=wiz.vals[f.key]||[];
     const allOpts=[...new Set([...(f.options||[]),...sel])];
@@ -589,6 +688,13 @@ function wizRead(){
   if(f.type==='combo'&&!inp.value.trim())return; // keep chip pick if input left empty
   wiz.vals[f.key]=inp.value.trim();
 }
+function wizNewOpt(kind){
+  const v=prompt('Add a new '+kind.replace('rel','relationship')+':');
+  if(!v||!v.trim())return;
+  const val=addCustom(kind,v);
+  wiz.vals[wiz.fields[wiz.step].key]=val;
+  wizNext(true);
+}
 function wizToggle(v){
   const f=wiz.fields[wiz.step];
   const a=wiz.vals[f.key]||[];
@@ -607,6 +713,7 @@ function wizNext(fromPick){
   if(!fromPick)wizRead();
   const f=wiz.fields[wiz.step];
   if(f.required&&!wiz.vals[f.key]){toast('This one is needed');return;}
+  if(f.after)try{f.after(wiz.vals[f.key],wiz.vals);}catch(e){}
   if(wiz.step===wiz.fields.length-1){const v=wiz.vals;const cb=wiz.onSave;wiz=null;closeModal();cb(v);return;}
   wiz.step++;renderWizard();
 }
@@ -617,13 +724,21 @@ function personWizard(pre){
   startWizard([
     {key:'name',label:'Who did you meet? Say the name.',required:true,hint:'e.g. “Dr. Ramesh Kulkarni”'},
     {key:'phone',label:'Their personal mobile?',type:'tel',hint:'Stored as their personal number — the clinic’s reception number lives on the clinic card'},
-    {key:'role',label:'Who are they?',type:'select',options:['Doctor','Design Partner','Design Partner / Referral','Receptionist / staff','Association contact','Commission partner','Official (KPME/IMA/DHO)','Co-founder','Vendor','Friend / personal','Other']},
-    {key:'specialty',label:'Specialty? (if doctor)',type:'select',options:SPECS},
-    {key:'clinic',label:'Linked to which clinic?',type:'select',options:S.clinics.map(c=>c.name)},
-    {key:'city',label:'Which city?',type:'select',options:CITIES},
-    {key:'source',label:'How did you meet them?',type:'select',options:SOURCES},
-    {key:'influence',label:'How much can they open doors for DeskLens?',type:'select',options:['High — can open doors','Medium','Low / not relevant']},
-    {key:'rel',label:'Relationship today?',type:'select',options:['New','Warm','Strong','Champion']},
+    {key:'role',label:'Who are they?',type:'select',kind:'role'},
+    {key:'specialty',label:'Specialty? (if doctor)',type:'select',kind:'specialty'},
+    {key:'clinic',label:'Linked to which clinic?',type:'select',options:S.clinics.map(c=>c.name),
+      after:(val,vals)=>{
+        const c=S.clinics.find(x=>x.name===val);
+        if(!c)return;
+        if(c.city)vals.city=c.city;
+        if(c.specialty&&c.specialty!=='Other'&&!vals.specialty)vals.specialty=c.specialty;
+        if(c.source&&!vals.source)vals.source=c.source;
+        toast('Pulled '+c.name.split(' ')[0]+' details in');
+      }},
+    {key:'city',label:'Which city?',type:'select',kind:'city'},
+    {key:'source',label:'How did you meet them?',type:'select',kind:'source'},
+    {key:'influence',label:'How much can they open doors for DeskLens?',type:'select',kind:'influence'},
+    {key:'rel',label:'Relationship today?',type:'select',kind:'rel'},
     {key:'notes',label:'Anything to remember about them?',type:'textarea',hint:'Dictate freely — promises, context, family, interests'}
   ],Object.assign({role:'Doctor',city:'Kalaburagi',rel:'New'},pre||{}),v=>{
     let p=S.people.find(x=>nameEq(x.name,v.name));
@@ -636,16 +751,24 @@ function personWizard(pre){
 function clinicWizard(pre){
   startWizard([
     {key:'name',label:'Clinic name?',required:true,hint:'e.g. “Smile Care Dental”'},
-    {key:'doctor',label:'The doctor you’re meeting there?',type:'combo',options:S.people.filter(p=>/doctor|design partner/i.test(p.role||'')).map(p=>p.name)},
-    {key:'specialty',label:'Specialty?',type:'select',options:SPECS},
-    {key:'city',label:'City?',type:'select',options:CITIES},
-    {key:'stage',label:'Where are they in your pipeline?',type:'select',options:STAGES.filter(s=>s!=='Lost')},
-    {key:'source',label:'How did this clinic come to you?',type:'select',options:SOURCES},
+    {key:'doctor',label:'The doctor you’re meeting there?',type:'combo',options:S.people.filter(p=>/doctor|design partner/i.test(p.role||'')).map(p=>p.name),
+      after:(val,vals)=>{
+        const p=S.people.find(x=>nameEq(x.name,val));
+        if(!p)return;
+        if(p.specialty)vals.specialty=p.specialty;
+        if(p.city)vals.city=p.city;
+        if(p.source&&!vals.source)vals.source=p.source;
+        toast('Pulled '+p.name.split(' ')[0]+'’s details in');
+      }},
+    {key:'specialty',label:'Specialty?',type:'select',kind:'specialty'},
+    {key:'city',label:'City?',type:'select',kind:'city'},
+    {key:'stage',label:'Where are they in your pipeline?',type:'select',options:optList('stage').filter(s=>s!=='Lost')},
+    {key:'source',label:'How did this clinic come to you?',type:'select',kind:'source'},
     {key:'phone',label:'Clinic reception number?',type:'tel',hint:'The line patients call — the number DeskLens will listen to'},
     {key:'reviews',label:'Google review count?',type:'number',hint:'Your call-volume proxy — check Maps if unsure'},
     {key:'whoAnswers',label:'Receptionist — who answers the phone?',hint:'She’s your daily contact once DeskLens runs. Gets her own card in People.'},
     {key:'whoAnswersPhone',label:'Receptionist’s mobile?',type:'tel',hint:'Optional — useful for WhatsApp coordination during pilot'},
-    {key:'brand',label:'Their handset brand?',type:'select',options:BRANDS.filter(b=>b),hint:'Decides if DeskLens can even work here. Motorola/Pixel = partial (unknown incoming only). iPhone/stock = cannot record.'},
+    {key:'brand',label:'Their handset brand?',type:'select',kind:'brand',hint:'Decides if DeskLens can even work here. Motorola/Pixel = partial (unknown incoming only). iPhone/stock = cannot record.'},
     {key:'handset',label:'Recording test call done?',type:'select',options:['unverified','ok','fail']},
     {key:'notes',label:'Anything else about this clinic?',type:'textarea'}
   ],Object.assign({specialty:'Dentistry',city:lastCity,stage:'Lead',handset:'unverified'},pre||{}),v=>{
@@ -919,11 +1042,18 @@ function dumpSaveAll(){
   save();closeModal();render();toast(n+' item'+(n>1?'s':'')+' filed ✓');
 }
 $('fab').onclick=openCapture;
+document.addEventListener('keydown',e=>{
+  const typing=/INPUT|TEXTAREA|SELECT/.test((e.target.tagName||''));
+  if(typing)return;
+  if(e.key==='/'||((e.metaKey||e.ctrlKey)&&e.key==='k')){e.preventDefault();openSearch();}
+  else if(e.key==='n'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();openCapture();}
+  else if(e.key==='Escape')closeModal();
+});
 
 /* ================= TABS ================= */
-const TABS_DL=[['today','Today'],['seq','Sequence'],['pipe','Pipeline'],['people','People'],['ins','Insights'],['dec','Decisions'],['data','Data']];
+const TABS_DL=[['today','Today'],['seq','Sequence'],['pipe','Pipeline'],['people','People'],['ins','Insights'],['rep','Reports'],['dec','Decisions'],['data','Data']];
 const TABS_DL_PILOT=[['today','Today'],['seq','Sequence'],['pipe','Pipeline'],['people','People'],['more','More']];
-const MORE_TABS=['more','ins','dec','data'];
+const MORE_TABS=['more','ins','dec','data','rep'];
 const TABS_ME=[['today','Today'],['fue','Follow-ups'],['seq','Tasks'],['goals','Goals'],['journal','Journal'],['data','Data']];
 let tab='today';
 let reviewState=null;
@@ -974,7 +1104,7 @@ function render(){
   if(reviewState){$('main').innerHTML=vReview();return;}
   if(detail&&space==='dl'){$('main').innerHTML=detail.type==='clinic'?vClinicDetail():vPersonDetail();return;}
   const map=space==='dl'
-    ?{today:vToday,seq:vSeq,pipe:vPipe,people:vPeople,ins:vIns,dec:vDec,data:vData,more:vMore}
+    ?{today:vToday,seq:vSeq,pipe:vPipe,people:vPeople,ins:vIns,rep:vReports,dec:vDec,data:vData,more:vMore}
     :{today:vMeToday,fue:vFuEngine,seq:vSeq,goals:vGoals,journal:vJournal,data:vData};
   const v=map[tab]||map.today;
   $('main').innerHTML=v();
@@ -1027,6 +1157,7 @@ function vMore(){
   const card=(t,d,fn)=>'<div class="item" style="cursor:pointer" onclick="'+fn+'"><div class="t">'+t+'</div><div class="m">'+d+'</div></div>';
   let h='<div class="subtle" style="margin-bottom:12px">Parked for later — everything still lives here, one tap away.</div>';
   h+=card('📊 Insights & Journey','Funnel, sources, charts, your story so far — richer once more clinics are in.',"go('ins')");
+  h+=card('📋 Reports','Any custom view: handset type, specialty, city, stale clinics, influence — with CSV export.',"go('rep')");
   h+=card('⚖️ Decisions & Open Questions','Append-only log · '+S.questions.filter(q=>q.status==='open').length+' open questions with Karthik.',"go('dec')");
   h+=card('💾 Data, Backup, AI & Guide','Backup/restore, Gemini key, how-to-use guide.',"go('data')");
   h+='<h2>Mode</h2><div class="card"><p style="font-size:13.5px;line-height:1.6;color:var(--muted)">Pilot Mode keeps daily screens lean for the 0→3 clinic phase. Switch to Full Mode when you want everything in the nav again — the app will also suggest it as you pass gates.</p><button class="btn sec sm" style="margin-top:8px" onclick="setPilot(false)">Switch to Full Mode</button></div>';
@@ -1248,6 +1379,185 @@ function vPeople(){
   return h;
 }
 
+/* ---------- REPORTS ---------- */
+let rep={base:'clinics',f:{}};
+const PRESETS=[
+  {n:'Recording-capable clinics',b:'clinics',f:{brandClass:'full'}},
+  {n:'Partial recording (Motorola/Pixel)',b:'clinics',f:{brandClass:'partial'}},
+  {n:'Cannot record — needs new phone',b:'clinics',f:{brandClass:'none'}},
+  {n:'Handset unknown at active clinics',b:'clinics',f:{brand:'—none—',activeOnly:'yes'}},
+  {n:'Recording test not done',b:'clinics',f:{handset:'unverified'}},
+  {n:'High-value leads (100+ reviews)',b:'clinics',f:{minRev:'100'}},
+  {n:'Not visited in 14+ days',b:'clinics',f:{staleDays:'14'}},
+  {n:'Never visited',b:'clinics',f:{staleDays:'never'}},
+  {n:'High-influence people',b:'people',f:{influence:'High — can open doors'}},
+  {n:'Champions & strong relationships',b:'people',f:{rel:'Champion'}},
+  {n:'Overdue follow-ups',b:'followups',f:{due:'overdue'}},
+  {n:'Open tasks in Now',b:'tasks',f:{bucket:'now'}}
+];
+function brandClass(b){if(!b)return'unknown';if(PARTIAL_BRANDS.includes(b))return'partial';if(BAD_BRANDS.includes(b))return'none';return'full';}
+function repRows(){
+  const f=rep.f;
+  if(rep.base==='clinics'){
+    return S.clinics.filter(c=>{
+      if(f.stage&&c.stage!==f.stage)return false;
+      if(f.activeOnly==='yes'&&!ACTIVE_STAGES.includes(c.stage))return false;
+      if(f.specialty&&c.specialty!==f.specialty)return false;
+      if(f.city&&c.city!==f.city)return false;
+      if(f.source&&c.source!==f.source)return false;
+      if(f.brand&&(f.brand==='—none—'?!!c.brand:c.brand!==f.brand))return false;
+      if(f.brandClass&&brandClass(c.brand)!==f.brandClass)return false;
+      if(f.handset&&c.handset!==f.handset)return false;
+      if(f.minRev&&!(parseInt(c.reviews||0)>=parseInt(f.minRev)))return false;
+      if(f.staleDays){
+        const lv=lastVisit(c);
+        if(f.staleDays==='never'){if(lv)return false;}
+        else if(!(!lv||daysAgo(lv)>=parseInt(f.staleDays)))return false;
+      }
+      return true;
+    }).map(c=>({id:c.id,type:'clinic',cols:[c.name,c.stage,c.specialty,c.city,(c.doctors||[]).join(', '),c.brand||'—',c.handset,c.reviews||'—',lastVisit(c)?daysAgo(lastVisit(c))+'d ago':'never']}));
+  }
+  if(rep.base==='people'){
+    return S.people.filter(p=>{
+      if(f.role&&p.role!==f.role)return false;
+      if(f.influence&&p.influence!==f.influence)return false;
+      if(f.rel&&p.rel!==f.rel)return false;
+      if(f.city&&p.city!==f.city)return false;
+      if(f.specialty&&p.specialty!==f.specialty)return false;
+      if(f.source&&p.source!==f.source)return false;
+      return true;
+    }).map(p=>({id:p.id,type:'person',cols:[p.name,p.role,p.specialty||'—',p.clinic||'—',p.city||'—',p.phone||'—',p.influence||'—',p.rel||'—']}));
+  }
+  if(rep.base==='followups'){
+    return allFU().filter(x=>{
+      const fu=x.f;
+      if(f.space&&x.sp!==f.space)return false;
+      if(f.who&&(fu.who||'')!==f.who)return false;
+      if(f.due==='overdue'&&!(fu.due&&daysTo(fu.due)<0))return false;
+      if(f.due==='week'&&!(fu.due&&daysTo(fu.due)>=0&&daysTo(fu.due)<=7))return false;
+      if(f.due==='none'&&fu.due)return false;
+      return true;
+    }).map(x=>({id:x.f.id,type:'fu',cols:[x.f.text,x.f.who||'—',x.f.due?fmtDs(x.f.due):'no date',x.f.time||'—',x.sp==='dl'?'DeskLens':'Personal',x.f.repeat&&x.f.repeat!=='none'?x.f.repeat:'—']}));
+  }
+  // tasks
+  const all=[...S.sequence.map(t=>({t,sp:'DeskLens'})),...S.me.sequence.map(t=>({t,sp:'Personal'}))];
+  return all.filter(({t})=>{
+    if(f.bucket&&t.bucket!==f.bucket)return false;
+    if(f.done==='yes'&&!t.done)return false;
+    if(f.done!=='yes'&&t.done)return false;
+    if(f.link&&t.link!==f.link)return false;
+    return true;
+  }).map(({t,sp})=>({id:t.id,type:'task',cols:[t.title,t.bucket,t.link||'—',sp,t.trigger||'—']}));
+}
+const REP_COLS={clinics:['Clinic','Stage','Specialty','City','Doctors','Brand','Recording','Reviews','Last visit'],
+  people:['Name','Role','Specialty','Clinic','City','Phone','Influence','Relationship'],
+  followups:['Follow-up','With','Due','Time','Space','Repeat'],
+  tasks:['Task','Bucket','Linked to','Space','Trigger']};
+function setRepBase(b){rep={base:b,f:{}};render();}
+function setRepF(k,v){if(v==='')delete rep.f[k];else rep.f[k]=v;render();}
+function applyPreset(i){const p=PRESETS[i];rep={base:p.b,f:Object.assign({},p.f)};render();}
+function repSel(k,label,opts,extra){
+  return '<label style="font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px">'+label
+    +'<select onchange="setRepF(\''+k+'\',this.value)" style="font-family:inherit;font-size:13px;padding:7px;border:1.5px solid var(--line);border-radius:9px;background:#FDFCF9">'
+    +['',...opts].map(o=>'<option value="'+esc(o)+'"'+((rep.f[k]||'')===o?' selected':'')+'>'+(o===''?'All':esc(o))+'</option>').join('')
+    +'</select></label>';
+}
+function vReports(){
+  const rows=repRows(),cols=REP_COLS[rep.base];
+  let h='<div class="topbar"><div class="subtle">Build any view of your data. Tap a row to open it.</div><button class="btn sm sec" onclick="repCSV()">⬇ Export CSV</button></div>';
+  h+='<div class="chips">'+[['clinics','Clinics'],['people','People'],['followups','Follow-ups'],['tasks','Tasks']].map(b=>'<button class="'+(rep.base===b[0]?'on':'')+'" onclick="setRepBase(\''+b[0]+'\')">'+b[1]+'</button>').join('')+'</div>';
+  h+='<div class="card" style="margin-bottom:12px"><div class="subtle" style="margin-bottom:6px">Quick reports</div><div class="filterrow">'
+    +PRESETS.map((p,i)=>'<button onclick="applyPreset('+i+')">'+esc(p.n)+'</button>').join('')+'</div></div>';
+  h+='<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:10px;flex-wrap:wrap">';
+  if(rep.base==='clinics'){
+    h+=repSel('stage','Stage',optList('stage'))+repSel('specialty','Specialty',optList('specialty'))+repSel('city','City',optList('city'))
+      +repSel('brand','Handset brand',['—none—',...optList('brand')])
+      +repSel('brandClass','Recording ability',['full','partial','none','unknown'])
+      +repSel('handset','Test call',['unverified','ok','fail'])
+      +repSel('source','Source',optList('source'))
+      +repSel('minRev','Min reviews',['50','100','200','500'])
+      +repSel('staleDays','Not visited',['7','14','30','never'])
+      +repSel('activeOnly','Active only',['yes']);
+  }else if(rep.base==='people'){
+    h+=repSel('role','Role',optList('role'))
+      +repSel('influence','Influence',optList('influence'))
+      +repSel('rel','Relationship',optList('rel'))
+      +repSel('specialty','Specialty',optList('specialty'))+repSel('city','City',optList('city'))+repSel('source','Source',optList('source'));
+  }else if(rep.base==='followups'){
+    h+=repSel('space','Space',['dl','me'])+repSel('due','Due',['overdue','week','none'])+repSel('who','With',whoOptions().filter(Boolean));
+  }else{
+    h+=repSel('bucket','Bucket',['now','queued','parked'])+repSel('done','Completed',['yes'])+repSel('link','Linked to',linkOptions().filter(o=>o!=='— none —'));
+  }
+  h+='</div>'+(Object.keys(rep.f).length?'<button class="btn sm sec" style="margin-top:10px" onclick="setRepBase(\''+rep.base+'\')">Clear filters</button>':'')+'</div>';
+  h+='<h2>'+rows.length+' result'+(rows.length!==1?'s':'')+'</h2>';
+  if(!rows.length)return h+'<div class="empty">Nothing matches these filters.</div>';
+  h+='<div class="card" style="overflow-x:auto;padding:0"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+    +'<thead><tr>'+cols.map(c=>'<th style="text-align:left;padding:10px 12px;border-bottom:1.5px solid var(--line);white-space:nowrap;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">'+c+'</th>').join('')+'</tr></thead><tbody>'
+    +rows.map(r=>'<tr style="cursor:pointer" '+(r.type==='clinic'?'data-oc="'+r.id+'"':r.type==='person'?'data-op="'+r.id+'"':'')+'>'
+      +r.cols.map((c,i)=>'<td style="padding:10px 12px;border-bottom:1px solid var(--line);'+(i===0?'font-weight:600;':'')+'">'+esc(String(c))+'</td>').join('')+'</tr>').join('')
+    +'</tbody></table></div>';
+  return h;
+}
+function repCSV(){
+  const rows=repRows(),cols=REP_COLS[rep.base];
+  const esc2=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const csv=[cols.map(esc2).join(',')].concat(rows.map(r=>r.cols.map(esc2).join(','))).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='desklens-'+rep.base+'-'+todayISO()+'.csv';a.click();URL.revokeObjectURL(a.href);
+  toast('CSV downloaded');
+}
+
+/* ---------- UNIVERSAL SEARCH ---------- */
+let searchQ='';
+function openSearch(){
+  const m=$('modal');
+  m.innerHTML='<h3>Search everything</h3>'
+    +'<div class="f"><input id="sq" placeholder="Clinic, doctor, task, note, decision…" value="'+esc(searchQ)+'" oninput="runSearch(this.value)"></div>'
+    +'<div id="sres"></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Close</button></div>';
+  $('overlay').classList.add('open');
+  const i=$('sq');if(i){i.focus();if(searchQ)runSearch(searchQ);}
+}
+function hit(txt,q){const i=(txt||'').toLowerCase().indexOf(q);if(i<0)return esc(txt||'');
+  return esc(txt.slice(0,i))+'<mark style="background:#FCEBA6;padding:0 2px;border-radius:3px">'+esc(txt.slice(i,i+q.length))+'</mark>'+esc(txt.slice(i+q.length));}
+function runSearch(v){
+  searchQ=v;const q=(v||'').trim().toLowerCase();
+  const box=$('sres');if(!box)return;
+  if(q.length<2){box.innerHTML='<div class="note">Type at least 2 characters.</div>';return;}
+  const R=[];
+  S.clinics.forEach(c=>{
+    const blob=[c.name,(c.doctors||[]).join(' '),c.city,c.specialty,c.notes,c.whoAnswers,c.phone,c.stage,c.brand,c.source].join(' ').toLowerCase();
+    if(blob.includes(q))R.push({g:'Clinics',t:c.name,m:[c.stage,c.city,(c.doctors||[]).join(', ')].filter(Boolean).join(' · '),act:'openClinic(\''+c.id+'\')'});
+    c.visits.forEach(vi=>{if((vi.note||'').toLowerCase().includes(q))R.push({g:'Visits',t:fmtD(vi.date)+' — '+c.name,m:vi.note,act:'openClinic(\''+c.id+'\')'});});
+  });
+  S.people.forEach(p=>{
+    const blob=[p.name,p.role,p.clinic,p.city,p.specialty,p.notes,p.phone,p.source,p.influence,p.rel].join(' ').toLowerCase();
+    if(blob.includes(q))R.push({g:'People',t:p.name,m:[p.role,p.clinic,p.city].filter(Boolean).join(' · '),act:'openPerson(\''+p.id+'\')'});
+  });
+  [['DeskLens',S.sequence],['Personal',S.me.sequence]].forEach(([sp,arr])=>{
+    arr.forEach(t=>{if([t.title,t.notes,t.trigger,t.link].join(' ').toLowerCase().includes(q))
+      R.push({g:'Tasks',t:t.title,m:sp+' · '+t.bucket+(t.done?' · done':'')+(t.link?' · '+t.link:''),act:'goSearch(\''+(sp==='DeskLens'?'dl':'me')+'\',\'seq\')'});});
+  });
+  [['DeskLens',S.followups],['Personal',S.me.followups]].forEach(([sp,arr])=>{
+    arr.forEach(f=>{if([f.text,f.who].join(' ').toLowerCase().includes(q))
+      R.push({g:'Follow-ups',t:f.text,m:sp+(f.who?' · '+f.who:'')+(f.due?' · '+fmtDs(f.due):'')+(f.done?' · closed':''),act:f.who?('navTo(\''+f.who.replace(/'/g,"\\'")+'\')'):'goSearch(\'me\',\'fue\')'});});
+  });
+  S.decisions.forEach(d=>{if([d.title,d.why].join(' ').toLowerCase().includes(q))R.push({g:'Decisions',t:d.title,m:fmtD(d.date),act:'goSearch(\'dl\',\'dec\')'});});
+  S.questions.forEach(qq=>{if([qq.q,qq.resolution,qq.withWhom].join(' ').toLowerCase().includes(q))R.push({g:'Questions',t:qq.q,m:qq.status+(qq.withWhom?' · '+qq.withWhom:''),act:'goSearch(\'dl\',\'dec\')'});});
+  S.inbox.concat(S.me.inbox).forEach(n=>{if((n.text||'').toLowerCase().includes(q))R.push({g:'Inbox',t:n.text,m:fmtDs(n.date),act:'goSearch(\'dl\',\'today\')'});});
+  S.me.journal.forEach(j=>{if((j.text||'').toLowerCase().includes(q))R.push({g:'Journal',t:j.text.slice(0,90),m:fmtD(j.date),act:'goSearch(\'me\',\'journal\')'});});
+  S.me.goals.forEach(g=>{if([g.title,g.why].join(' ').toLowerCase().includes(q))R.push({g:'Goals',t:g.title,m:g.horizon,act:'goSearch(\'me\',\'goals\')'});});
+  if(!R.length){box.innerHTML='<div class="empty">Nothing found for “'+esc(v)+'”.</div>';return;}
+  const groups={};R.forEach(r=>{(groups[r.g]=groups[r.g]||[]).push(r);});
+  box.innerHTML='<div class="subtle" style="margin-bottom:6px">'+R.length+' result'+(R.length>1?'s':'')+'</div>'
+    +Object.keys(groups).map(g=>'<div style="margin-bottom:10px"><div class="colh" style="margin-bottom:4px">'+g+'<span class="cnt">'+groups[g].length+'</span></div>'
+      +groups[g].slice(0,8).map(r=>'<div class="item" style="margin-bottom:6px;cursor:pointer" onclick="closeModal();'+r.act+'"><div class="t" style="font-size:13.5px">'+hit(r.t,q)+'</div>'+(r.m?'<div class="m">'+hit(r.m,q)+'</div>':'')+'</div>').join('')
+      +(groups[g].length>8?'<div class="subtle">+'+(groups[g].length-8)+' more</div>':'')
+    +'</div>').join('');
+}
+function goSearch(sp,t){if(space!==sp)space=sp;detail=null;navStack=[];tab=t;render();window.scrollTo(0,0);}
+
 /* ---------- DETAIL PAGES ---------- */
 function detailHeader(title,pills,meta){
   return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><button class="btn sec sm" onclick="navBack()">← Back</button></div>'
@@ -1468,6 +1778,15 @@ function vData(){
     +'</div></div>';
   h+='<h2>About</h2><div class="card"><p style="font-size:13.5px;line-height:1.65;color:var(--muted)">DeskLens HQ v6.3 \u2014 Vinay\u2019s command center. Clickable detail pages for every clinic & person. Clean extraction everywhere. Voice-first capture with AI. Pilot Mode. Follow-up engine across both worlds. Two spaces: DeskLens (Sequence \u00b7 Pipeline with visits & 3\u21928\u219215\u2192400 gates \u00b7 People \u00b7 Insights \u00b7 Decisions \u00b7 Weekly Review) and My World (Tasks & routines \u00b7 Goals with check-ins \u00b7 Journal). Voice-first capture with Smart Dump: speak a stream, I bucket it, you confirm. One backup covers both spaces. Next: Firebase auto-sync once daily use has earned it.</p></div>';
   if(space==='dl')h+='<h2>Mode</h2><div class="card"><span class="subtle">Currently: <b>'+(S.meta.pilotMode?'Pilot Mode (lean)':'Full Mode')+'</b></span><br><button class="btn sec sm" style="margin-top:8px" onclick="setPilot('+(!S.meta.pilotMode)+')">'+(S.meta.pilotMode?'Switch to Full Mode':'Switch to Pilot Mode')+'</button></div>';
+  const hk=S.meta.hook||{};
+  h+='<h2>Main server integration <span class="pill '+(hk.on?'green':'grey')+'">'+(hk.on?'ON':'ready · off')+'</span></h2><div class="card">'
+    +'<p style="font-size:13.5px;line-height:1.6">For later: when the DeskLens server is live, put its endpoint here and every change pushes there automatically (4s after you stop editing). Nothing leaves your devices until you switch it on.</p>'
+    +'<div class="f"><label>Server endpoint (HTTPS POST)</label><input id="hkurl" placeholder="https://api.desklens.in/hq/sync" value="'+esc(hk.url||'')+'"></div>'
+    +'<div class="f"><label>Shared secret (sent as X-HQ-Secret)</label><input id="hksec" type="password" value="'+esc(hk.secret||'')+'"></div>'
+    +'<div class="f"><label>Enabled</label><select id="hkon"><option value="no"'+(hk.on?'':' selected')+'>no</option><option value="yes"'+(hk.on?' selected':'')+'>yes</option></select></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" onclick="saveHook()">Save</button><button class="btn sm sec" onclick="hookSend()">Send now (test)</button><button class="btn sm sec" onclick="downloadExport()">Download payload sample</button></div>'
+    +'<div class="note">'+(hk.lastAt?('Last sent '+esc(hk.lastAt.slice(0,10))+' '+esc(hk.lastAt.slice(11,16))):'Never sent')+(hk.lastErr?(' · last error: '+esc(hk.lastErr)):'')+'</div>'
+    +'<div class="note">Payload <code>desklens-hq/1</code>: clinics, people, sequence, followups, decisions, questions, journey, inbox, personal — every record carries a stable <code>id</code> for server-side upsert.</div></div>';
   h+='<h2>App version</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Running <b>v'+APP_VERSION+'</b>. If a device is stuck on an old version, tap below — it clears the offline cache and reloads the newest build. Your data is not affected.</p><button class="btn sm sec" onclick="forceUpdate()">Force update now</button></div>';
   h+='<h2>Danger zone</h2><div class="card"><button class="btn sec" style="color:var(--red);border-color:var(--red)" onclick="resetAll()">Reset to seed data</button></div>';
   return h;
@@ -1850,15 +2169,15 @@ function editClinic(id){
   openModal(id?'Edit clinic':'Add clinic',[
     {key:'name',label:'Clinic name',value:c.name},
     {key:'doctors',label:'Doctors at this clinic (tap to connect, or type)',type:'tags',options:S.people.filter(p=>/doctor|design partner/i.test(p.role||'')).map(p=>p.name),value:(c.doctors||[]).join(', ')},
-    {key:'specialty',label:'Specialty',type:'select',options:SPECS,value:c.specialty},
-    {key:'city',label:'City',type:'select',options:CITIES.includes(c.city)?CITIES:[c.city,...CITIES],value:c.city},
-    {key:'stage',label:'Stage',type:'select',options:STAGES,value:c.stage},
-    {key:'source',label:'How this clinic came to you',type:'select',options:['',...SOURCES],value:c.source||''},
+    {key:'specialty',label:'Specialty',type:'select',kind:'specialty',value:c.specialty},
+    {key:'city',label:'City',type:'select',kind:'city',value:c.city},
+    {key:'stage',label:'Stage',type:'select',kind:'stage',value:c.stage},
+    {key:'source',label:'How this clinic came to you',type:'select',kind:'source',allowBlank:true,value:c.source||''},
     {key:'phone',label:'Clinic reception number (the line patients call)',type:'tel',value:c.phone||''},
     {key:'reviews',label:'Google review count (call-volume proxy)',type:'number',value:String(c.reviews||'')},
     {key:'whoAnswers',label:'Receptionist — who answers the phone',value:c.whoAnswers||''},
     {key:'whoAnswersPhone',label:'Receptionist’s mobile',type:'tel',value:c.whoAnswersPhone||''},
-    {key:'brand',label:'Clinic handset brand (determines recording capability)',type:'select',options:BRANDS.includes(c.brand)?BRANDS:[c.brand,...BRANDS],value:c.brand},
+    {key:'brand',label:'Clinic handset brand (determines recording capability)',type:'select',kind:'brand',allowBlank:true,value:c.brand},
     {key:'handset',label:'Handset recording check (test call done?)',type:'select',options:['unverified','ok','fail'],value:c.handset},
     {key:'notes',label:'Notes (objections, promises\u2026)',type:'textarea',value:c.notes}
   ],v=>{
@@ -1896,13 +2215,13 @@ function editPerson(id){
   openModal(id?'Edit person':'Add person',[
     {key:'name',label:'Name (only thing you must type)',value:p.name},
     {key:'phone',label:'Personal mobile (optional)',type:'tel',value:p.phone||''},
-    {key:'role',label:'Role',type:'select',options:['Doctor','Design Partner','Design Partner / Referral','Receptionist / staff','Association contact','Commission partner','Official (KPME/IMA/DHO)','Co-founder','Vendor','Friend / personal','Other'],value:p.role},
-    {key:'specialty',label:'Specialty (if doctor)',type:'select',options:['',...SPECS],value:p.specialty||''},
+    {key:'role',label:'Role',type:'select',kind:'role',value:p.role},
+    {key:'specialty',label:'Specialty (if doctor)',type:'select',kind:'specialty',allowBlank:true,value:p.specialty||''},
     {key:'clinic',label:'Linked clinic',type:'select',options:clinicOpts.includes(p.clinic)?clinicOpts:[p.clinic||'— none —',...clinicOpts.filter(c=>c!=='— none —')],value:p.clinic||'— none —'},
-    {key:'city',label:'City',type:'select',options:CITIES.includes(p.city)?CITIES:[p.city||'Kalaburagi',...CITIES],value:p.city||'Kalaburagi'},
-    {key:'source',label:'How you know them',type:'select',options:['',...SOURCES],value:p.source},
-    {key:'influence',label:'Influence for DeskLens',type:'select',options:['','High — can open doors','Medium','Low / not relevant'],value:p.influence},
-    {key:'rel',label:'Relationship today',type:'select',options:['New','Warm','Strong','Champion','Cold / lapsed'],value:p.rel||'New'},
+    {key:'city',label:'City',type:'select',kind:'city',value:p.city||'Kalaburagi'},
+    {key:'source',label:'How you know them',type:'select',kind:'source',allowBlank:true,value:p.source},
+    {key:'influence',label:'Influence for DeskLens',type:'select',kind:'influence',allowBlank:true,value:p.influence},
+    {key:'rel',label:'Relationship today',type:'select',kind:'rel',value:p.rel||'New'},
     {key:'notes',label:'Notes (optional)',type:'textarea',value:p.notes}
   ],v=>{
     if(!v.name)return;
@@ -1937,18 +2256,45 @@ function editQ(id){
     save();render();
   },id?()=>{S.questions=S.questions.filter(x=>x.id!==id);save();render();}:null);
 }
+function qOptions(text){
+  const t=(text||'');
+  // "A or B?" / "A vs B" \u2014 offer each side as a tap-able answer
+  const m=t.match(/([A-Za-z0-9][\w .\/+-]{1,40}?)\s+(?:or|vs\.?|versus)\s+([A-Za-z0-9][\w .\/+-]{1,40}?)\s*[?\u2014-]/i)
+        ||t.match(/([A-Za-z0-9][\w .\/+-]{1,40}?)\s+(?:or|vs\.?|versus)\s+([A-Za-z0-9][\w .\/+-]{1,40})/i);
+  const out=[];
+  if(m){out.push(m[1].trim(),m[2].trim());}
+  if(/\?$/.test(t.trim())&&!out.length)out.push('Yes','No');
+  return out;
+}
 function resolveQ(id){
   const q=S.questions.find(x=>x.id===id);
-  openModal('Resolve question',[
-    {key:'resolution',label:'What was decided?',type:'textarea',value:''},
-    {key:'log',label:'Also add to decision log?',type:'select',options:['yes','no'],value:'yes'}
-  ],v=>{
-    if(!v.resolution)return;
-    q.status='resolved';q.resolution=v.resolution;
-    jlog('resolved',q.q+' \u2192 '+v.resolution.slice(0,80));
-    if(v.log==='yes')S.decisions.push({id:uid(),date:todayISO(),title:q.q,why:v.resolution});
-    save();render();toast('Resolved \u2713');
-  });
+  const opts=qOptions(q.q);
+  const m=$('modal');
+  const commonList=['Yes','No','Decided \u2014 see note','Dropped / not needed','Deferred'];
+  const chips=[...new Set([...opts,...commonList])];
+  m.innerHTML='<h3>Resolve</h3>'
+    +'<div class="note" style="margin-bottom:10px">'+esc(q.q)+'</div>'
+    +'<div class="subtle" style="margin-bottom:4px">Tap the answer</div>'
+    +'<div class="chips" id="qchips">'+chips.map(o=>'<button onclick="pickQAns(this)">'+esc(o)+'</button>').join('')+'</div>'
+    +'<div class="f"><label>Answer (edit or add detail)</label><textarea id="qres" style="min-height:60px"></textarea></div>'
+    +'<div class="f"><label>Also add to decision log?</label><select id="qlog"><option value="yes">yes</option><option value="no">no</option></select></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" onclick="saveQRes(\''+id+'\')">Resolve \u2713</button></div>';
+  $('overlay').classList.add('open');
+}
+function pickQAns(btn){
+  const ta=$('qres');
+  ta.value=ta.value.trim()?ta.value.trim()+' \u2014 '+btn.textContent:btn.textContent;
+  [...document.querySelectorAll('#qchips button')].forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+}
+function saveQRes(id){
+  const q=S.questions.find(x=>x.id===id);
+  const res=$('qres').value.trim();
+  if(!res){toast('Tap an answer first');return;}
+  q.status='resolved';q.resolution=res;
+  jlog('resolved',q.q+' \u2192 '+res.slice(0,80));
+  if($('qlog').value==='yes')S.decisions.push({id:uid(),date:todayISO(),title:q.q,why:res});
+  save();closeModal();render();toast('Resolved \u2713');
 }
 
 function doBackup(){
@@ -1979,7 +2325,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='7.6';
+const APP_VERSION='8.2';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
