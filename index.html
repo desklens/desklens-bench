@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.7</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.8</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -1730,29 +1730,31 @@ async function gemini(parts,opts){
   opts=opts||{};
   if(!S.meta.aiKey)throw new Error('No Gemini key — Data tab → AI power');
   const order=[...new Set([opts.prefer,S.meta.aiModel,...GEM_MODELS].filter(Boolean))];
-  const notes=[];let busy=false;const deadline=Date.now()+14000;
-  for(const m of order){
-    if(Date.now()>deadline)break;
-    for(let attempt=0;attempt<3;attempt++){
-      if(Date.now()>deadline){busy=busy||true;break;}
-      try{
-        const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+encodeURIComponent(S.meta.aiKey),
-          {method:'POST',headers:{'Content-Type':'application/json'},
-           body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:opts.temp||0,responseMimeType:'application/json'}})});
-        if(r.status===404||r.status===400||r.status===403){notes.push(m+'→'+r.status);break;}     // wrong model/key: next model
-        if(r.status===503||r.status===429||r.status===500){                                        // busy: wait and retry SAME model
-          busy=true;notes.push(m+'→'+r.status);
-          if(attempt<2){if(opts.onRetry)opts.onRetry(attempt+1);await sleep(1500*(attempt+1));continue;}
-          break;
-        }
-        if(!r.ok){notes.push(m+'→'+r.status);break;}
-        const j=await r.json();
-        const txt=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts[0].text;
-        if(!txt){notes.push(m+'→empty');break;}
-        if(S.meta.aiModel!==m){S.meta.aiModel=m;localStorage.setItem(LS_KEY,JSON.stringify(S));}
-        return JSON.parse(txt);
-      }catch(e){notes.push(m+'→'+(e.message||'err'));break;}
-    }
+  /* When Google is congested, hopping to another 2.5 model beats waiting on the busy one.
+     Pass 1: try each model once. Pass 2: come back with longer waits. */
+  const notes=[];let busy=false;const deadline=Date.now()+20000;
+  const plan=[];
+  order.forEach(m=>plan.push({m,wait:0}));
+  order.forEach(m=>plan.push({m,wait:2500}));
+  order.forEach(m=>plan.push({m,wait:4000}));
+  let step=0;
+  for(const {m,wait} of plan){
+    step++;
+    if(Date.now()>deadline){busy=true;break;}
+    if(wait){if(opts.onRetry)opts.onRetry(step,m);await sleep(wait);}
+    try{
+      const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+encodeURIComponent(S.meta.aiKey),
+        {method:'POST',headers:{'Content-Type':'application/json'},
+         body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:opts.temp||0,responseMimeType:'application/json'}})});
+      if(r.status===404||r.status===400||r.status===403){notes.push(m+'→'+r.status);continue;}
+      if(r.status===503||r.status===429||r.status===500){busy=true;notes.push(m+'→'+r.status);if(opts.onRetry)opts.onRetry(step,m);continue;}
+      if(!r.ok){notes.push(m+'→'+r.status);continue;}
+      const j=await r.json();
+      const txt=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts[0].text;
+      if(!txt){notes.push(m+'→empty');continue;}
+      if(S.meta.aiModel!==m){S.meta.aiModel=m;localStorage.setItem(LS_KEY,JSON.stringify(S));}
+      return JSON.parse(txt);
+    }catch(e){notes.push(m+'→'+(e.message||'err'));}
   }
   if(busy)throw new Error('Google’s AI servers are busy right now (503). Your key is fine — wait a few seconds and tap again. Long recordings hit this more often; a shorter clip or pasted notes will go through.');
   throw new Error('No working model on your key ('+notes.slice(0,3).join(', ')+'). Check the key in Data → AI power.');
@@ -1867,34 +1869,48 @@ async function convRun(){
   if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
   if(f&&f.size>18*1024*1024){alert('That file is '+(f.size/1048576).toFixed(1)+' MB. Keep recordings under ~18 MB (about 10 minutes) — or paste the transcript instead.');return;}
   $('modal').innerHTML='<h3>Listening…</h3><div class="note">'+(f?'Transcribing and extracting. A few-minute call takes ~20–40 seconds.':'Extracting the key points.')+'</div>';
-  const known=S.people.map(p=>p.name).join('; ');
-  const instruction='You are analysing a conversation between Vinay (founder of DeskLens, an AI call-intelligence product sold to clinics in tier-2/3 India for ₹6,000/month, sales motion = free 7-day call audit) and people connected to "'+conv.name+'". '
-    +'This is a SALES / RELATIONSHIP conversation, not a patient call. Known contacts: '+known+'.\n'
-    +'Extract only what was actually said — never invent. Return ONLY JSON:\n'
-    +'{"summary":"3-4 sentence account of the conversation","points":["concrete facts, decisions, context worth remembering"],'
-    +'"commitments":[{"who":"Vinay|<their name>","what":"the promise","due":"YYYY-MM-DD or empty"}],'
-    +'"objections":["concerns or pushback raised, in their words where possible"],'
-    +'"pricing":["anything about price, budget, comparisons, willingness to pay"],'
-    +'"people":[{"name":"","role":"a role if stated"}],'
-    +'"nextStep":"the single clearest next action","suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|"'
-    +',"sentimentNote":"one line on how warm/hesitant they seemed, based on what they said"}';
+  const known=S.people.slice(0,25).map(p=>p.name).join('; ');
+  const instruction='Sales conversation between Vinay (founder, DeskLens — AI call intelligence for Indian clinics, ₹6,000/month, sells via a free 7-day call audit) and people at "'+conv.name+'". Today is '+todayISO()+'. Known contacts: '+known+'.\n'
+    +'Extract only what was said; never invent. JSON only:\n'
+    +'{"summary":"3-4 sentences","points":["facts worth remembering"],'
+    +'"commitments":[{"who":"Vinay or their name","what":"promise","due":"YYYY-MM-DD or empty"}],'
+    +'"objections":["pushback in their words"],"pricing":["price/budget/competitor mentions"],'
+    +'"people":[{"name":"","role":""}],"nextStep":"clearest next action",'
+    +'"suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|","sentimentNote":"one line on how warm or hesitant"}';
   try{
     const parts=[{text:instruction}];
     if(txt)parts.push({text:'\n\nTRANSCRIPT / NOTES:\n'+txt});
     if(f)parts.push({inline_data:{mime_type:(f.type||'audio/mpeg').split(';')[0],data:await fileToB64(f)}});
-    conv.out=await gemini(parts,{temp:0.1,prefer:'gemini-2.5-flash',onRetry:n=>{
-      const m=$('modal');if(m)m.innerHTML='<h3>Servers are busy…</h3><div class="note">Google’s AI is under load. Retrying (attempt '+(n+1)+' of 3) — nothing is lost.</div>';
+    conv.out=await gemini(parts,{temp:0.1,prefer:'gemini-2.5-flash',onRetry:(n,mdl)=>{
+      const m=$('modal');
+      if(m)m.innerHTML='<h3>Google’s AI is busy…</h3><div class="note">Trying another 2.5 model ('+esc(mdl||'')+'). Attempt '+n+'. Your text is safe — nothing is lost.</div>';
     }});
     conv.date=date;conv.src=f?'recording':'notes';
     rec.blob=null;
     renderConvReview();
   }catch(e){
     rec.blob=null;
-    conv._keep={txt:txt,date:date};                    // don't lose what he typed
-    alert('Could not read that.\n\n'+e.message);
-    renderConvInput();
-    setTimeout(()=>{const t=$('cvtxt');if(t&&conv&&conv._keep)t.value=conv._keep.txt||'';},50);
+    conv._keep={txt:txt,date:date};
+    const busy=/busy/i.test(e.message);
+    $('modal').innerHTML='<h3>'+(busy?'Google’s AI is overloaded':'Could not read that')+'</h3>'
+      +'<div class="note" style="margin-bottom:10px">'+esc(e.message)+'</div>'
+      +(busy?'<div class="hl warn"><i class="dot"></i><div>This is Google’s side, not your key or your notes. Your text is saved below — tap Try again in a few seconds, it usually goes through.</div></div>':'')
+      +'<div class="f" style="margin-top:10px"><label>Your notes (kept safe)</label><textarea id="cvtxt" style="min-height:110px">'+esc(txt||'')+'</textarea></div>'
+      +'<input type="hidden" id="cvdate" value="'+esc(date)+'">'
+      +'<div class="mbtns"><button class="btn sec" onclick="convSaveRaw()">Save notes as-is</button><button class="btn" onclick="convRun()">Try again</button></div>';
   }
+}
+function convSaveRaw(){
+  const txt=($('cvtxt')&&$('cvtxt').value||'').trim();
+  if(!txt){toast('Nothing to save');return;}
+  const date=($('cvdate')&&$('cvdate').value)||todayISO();
+  const obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
+  if(!obj)return;
+  obj.calls=obj.calls||[];
+  obj.calls.push({id:uid(),date,src:'notes',summary:txt,points:[],objections:[],pricing:[],nextStep:'',sentiment:'',raw:true});
+  jlog('call','Conversation noted — '+obj.name+': '+txt.slice(0,70),date);
+  conv=null;closeModal();save();render();
+  toast('Notes saved to the trail ✓ — analyse later from the clinic page');
 }
 function renderConvReview(){
   const o=conv.out||{};
@@ -3160,7 +3176,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.7';
+const APP_VERSION='9.8';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
