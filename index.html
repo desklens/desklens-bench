@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.2</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v8.4</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -720,6 +720,180 @@ function wizNext(fromPick){
 function wizBack(){wizRead();wiz.step--;renderWizard();}
 function wizSkip(){wiz.step===wiz.fields.length-1?wizNext(true):(wiz.step++,renderWizard());}
 
+/* ================= ONE-PAGE ADD (with voice fill) ================= */
+let form=null;
+const FORM_DEFS={
+  clinic:{
+    title:'New clinic',
+    fields:[
+      {k:'name',l:'Clinic name',t:'text',req:true},
+      {k:'doctor',l:'Doctor',t:'people',opts:()=>S.people.filter(p=>/doctor|design partner/i.test(p.role||'')).map(p=>p.name)},
+      {k:'specialty',l:'Specialty',t:'chips',kind:'specialty'},
+      {k:'city',l:'City',t:'chips',kind:'city'},
+      {k:'stage',l:'Stage',t:'chips',kind:'stage'},
+      {k:'source',l:'How it came to you',t:'chips',kind:'source'},
+      {k:'phone',l:'Reception number',t:'tel'},
+      {k:'reviews',l:'Google reviews',t:'number'},
+      {k:'whoAnswers',l:'Receptionist name',t:'text'},
+      {k:'whoAnswersPhone',l:'Receptionist mobile',t:'tel'},
+      {k:'brand',l:'Handset brand',t:'chips',kind:'brand',hint:'Motorola/Pixel = unknown incoming only · iPhone/stock = cannot record'},
+      {k:'handset',l:'Recording test',t:'chips',opts:()=>['unverified','ok','fail']},
+      {k:'notes',l:'Notes',t:'area'}
+    ],
+    init:()=>({specialty:'',city:lastCity,stage:'Lead',handset:'unverified'})
+  },
+  person:{
+    title:'New person',
+    fields:[
+      {k:'name',l:'Name',t:'text',req:true},
+      {k:'phone',l:'Personal mobile',t:'tel'},
+      {k:'role',l:'Role',t:'chips',kind:'role'},
+      {k:'specialty',l:'Specialty (if doctor)',t:'chips',kind:'specialty'},
+      {k:'clinic',l:'Clinic',t:'chips',opts:()=>S.clinics.map(c=>c.name)},
+      {k:'city',l:'City',t:'chips',kind:'city'},
+      {k:'source',l:'How you know them',t:'chips',kind:'source'},
+      {k:'influence',l:'Influence for DeskLens',t:'chips',kind:'influence'},
+      {k:'rel',l:'Relationship',t:'chips',kind:'rel'},
+      {k:'notes',l:'Notes',t:'area'}
+    ],
+    init:()=>({role:'Doctor',city:'Kalaburagi',rel:'New'})
+  }
+};
+function openForm(kind,pre){
+  const d=FORM_DEFS[kind];
+  form={kind,vals:Object.assign(d.init(),pre||{})};
+  renderForm();
+}
+function renderForm(){
+  const d=FORM_DEFS[form.kind],v=form.vals;
+  const rows=d.fields.map(f=>{
+    if(f.t==='chips'||f.t==='people'){
+      const list=f.kind?optList(f.kind):(f.opts?f.opts():[]);
+      const shown=[...new Set([...list,...(v[f.k]&&!list.includes(v[f.k])?[v[f.k]]:[])])];
+      return '<div class="f"><label>'+esc(f.l)+(v[f.k]?' · <b style="color:var(--teal)">'+esc(v[f.k])+'</b>':'')+'</label>'
+        +(f.hint?'<div class="note" style="margin:0 0 4px">'+esc(f.hint)+'</div>':'')
+        +'<div class="chips" style="max-height:112px;overflow-y:auto">'
+        +shown.map(o=>'<button type="button" class="'+(v[f.k]===o?'on':'')+'" onclick="formSet(\''+f.k+'\',this.textContent)">'+esc(o)+'</button>').join('')
+        +'<button type="button" style="border-style:dashed;border-color:var(--teal);color:var(--teal)" onclick="formNew(\''+f.k+'\',\''+(f.kind||'')+'\')">＋ New</button>'
+        +(v[f.k]?'<button type="button" style="color:var(--muted)" onclick="formSet(\''+f.k+'\',\'\')">clear</button>':'')
+        +'</div></div>';
+    }
+    if(f.t==='area')return '<div class="f"><label>'+esc(f.l)+'</label><textarea id="ff_'+f.k+'" oninput="form.vals.'+f.k+'=this.value">'+esc(v[f.k]||'')+'</textarea></div>';
+    return '<div class="f"><label>'+esc(f.l)+(f.req?' *':'')+'</label><input type="'+f.t+'" id="ff_'+f.k+'" value="'+esc(v[f.k]||'')+'" oninput="form.vals.'+f.k+'=this.value"></div>';
+  }).join('');
+  $('modal').innerHTML='<h3>'+d.title+'</h3>'
+    +'<button class="btn sm sec" style="margin-bottom:10px" onclick="formVoice()">🎤 Speak the details — I’ll fill this in</button>'
+    +rows
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal();form=null">Cancel</button><button class="btn" onclick="formSave()">Save ✓</button></div>';
+  $('overlay').classList.add('open');
+}
+function formSet(k,val){form.vals[k]=val;renderForm();}
+function formNew(k,kind){
+  const val=prompt('Add a new '+(kind||k)+':');
+  if(!val||!val.trim())return;
+  form.vals[k]=kind?addCustom(kind,val):val.trim();
+  renderForm();
+}
+function formVoice(){
+  const eg=form.kind==='clinic'
+    ?'e.g. “Apex Dental, Dr Shetgar, dentistry, Kalaburagi, Samsung phone, 200 reviews, receptionist Shalini 9876543210”'
+    :'e.g. “Dr Ramesh Kulkarni, orthopaedics, Bidar, 9876543210, met through Dr Shetgar, very influential”';
+  $('modal').innerHTML='<h3>Speak the details</h3>'
+    +'<div class="note" style="margin-bottom:8px">Say everything you know in one go — order doesn’t matter. I’ll place each piece in the right field and show you exactly what went where, before anything is saved.</div>'
+    +'<div class="f"><textarea id="vfx" style="min-height:120px" placeholder="'+esc(eg)+'"></textarea></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="renderForm()">← Back</button><button class="btn" onclick="formVoiceRun()">Read it →</button></div>';
+  setTimeout(()=>{const t=$('vfx');if(t)t.focus();},50);
+}
+function formVoiceRun(){
+  const txt=($('vfx')&&$('vfx').value||'').trim();
+  if(!txt){toast('Nothing to read');return;}
+  const before=Object.assign({},form.vals);
+  const finish=(src)=>{
+    const d=FORM_DEFS[form.kind];
+    const changed=d.fields.filter(f=>form.vals[f.k]&&form.vals[f.k]!==before[f.k]);
+    const missing=d.fields.filter(f=>['name','specialty','city','brand','doctor','role'].includes(f.k)&&!form.vals[f.k]);
+    $('modal').innerHTML='<h3>Check what I understood</h3>'
+      +'<div class="note" style="margin-bottom:8px">Read by '+src+'. Nothing is saved yet.</div>'
+      +(changed.length?changed.map(f=>'<div class="item" style="margin-bottom:6px"><div class="irow"><div><div class="m" style="margin:0">'+esc(f.l)+'</div><div class="t">'+esc(form.vals[f.k])+'</div></div><div class="acts"><button onclick="voiceClear(\''+f.k+'\')">✕</button></div></div></div>').join('')
+        :'<div class="empty">I couldn’t pick anything out — try naming fields, e.g. “specialty dentistry, city Bidar”.</div>')
+      +(missing.length?'<div class="hl warn" style="margin-top:10px"><i class="dot"></i><div>Still empty: '+missing.map(f=>esc(f.l)).join(', ')+' — fill on the next screen.</div></div>':'')
+      +'<div class="mbtns"><button class="btn sec" onclick="voiceUndo()">Undo</button><button class="btn sec" onclick="formVoice()">Say more</button><button class="btn" onclick="renderForm()">Looks right →</button></div>';
+    form._before=before;
+  };
+  if(S.meta.aiKey){
+    $('modal').innerHTML='<h3>Reading…</h3><div class="note">Placing each detail in the right field.</div>';
+    aiFillForm(txt,form.kind).then(o=>{
+      const d=FORM_DEFS[form.kind],keys=d.fields.map(f=>f.k);
+      Object.keys(o).forEach(k=>{if(keys.includes(k)&&o[k])form.vals[k]=String(o[k]);});
+      finish('AI');
+    }).catch(()=>{ruleFill(txt);finish('keywords (AI unavailable)');});
+  }else{ruleFill(txt);finish('keywords');}
+}
+function voiceClear(k){form.vals[k]='';formVoiceRunRefresh();}
+function formVoiceRunRefresh(){const b=form._before||{};const tmp=$('vfx');renderForm();}
+function voiceUndo(){if(form._before)form.vals=Object.assign({},form._before);renderForm();toast('Reverted');}
+function bestMatch(text,list){
+  const lo=' '+text.toLowerCase().replace(/[^a-z0-9 /]/g,' ')+' ';
+  let best='';
+  list.forEach(o=>{
+    o.split('/').map(x=>x.trim()).forEach(alias=>{
+      const a=alias.toLowerCase().replace(/[^a-z0-9 ]/g,' ').trim();
+      if(a.length<3)return;
+      if(new RegExp('(^| )'+a.replace(/\s+/g,'\\s+')+'( |$)').test(lo)&&a.length>best.length)best=o;
+    });
+  });
+  return best;
+}
+function ruleFill(txt){
+  const v=form.vals,parts=txt.split(/[,\n]/).map(x=>x.trim()).filter(Boolean);
+  if(!v.name&&parts[0])v.name=parts[0];
+  const whole=txt;
+  const sp=bestMatch(whole,optList('specialty'));if(sp)v.specialty=sp;
+  const ct=bestMatch(whole,optList('city'));if(ct)v.city=ct;
+  const br=bestMatch(whole,optList('brand'));if(br)v.brand=br;
+  if(form.kind==='person'){const rl=bestMatch(whole,optList('role'));if(rl)v.role=rl;}
+  parts.forEach(p=>{
+    const rev=p.match(/(\d{2,5})\s*(reviews?|ratings?)/i);if(rev)v.reviews=rev[1];
+    const ph=p.match(/\b([6-9]\d{9})\b/);
+    if(ph){if(/recept/i.test(p)&&form.kind==='clinic')v.whoAnswersPhone=ph[1];else if(form.kind==='clinic'&&!v.phone)v.phone=ph[1];else if(!v.phone)v.phone=ph[1];}
+    const dr=p.match(/\bDr\.?\s+[A-Z][\w.]*(\s+[A-Z][\w.]*)?/);
+    if(dr&&form.kind==='clinic'&&!v.doctor)v.doctor=dr[0];
+    const rc=p.match(/recept(?:ionist)?\s+([A-Z][a-z]+)/i);if(rc&&form.kind==='clinic')v.whoAnswers=rc[1];
+  });
+}
+async function aiFillForm(txt,kind){
+  const fields=kind==='clinic'
+    ?'name, doctor, specialty, city, stage, source, phone (reception), reviews (number only), whoAnswers (receptionist name), whoAnswersPhone, brand (handset), notes'
+    :'name, phone, role, specialty, clinic, city, source, influence, rel (relationship), notes';
+  const body={contents:[{parts:[{text:'Extract fields from this Indian clinic/contact description into JSON with keys: '+fields+'. Use these allowed values where they fit — specialty: '+optList('specialty').join('|')+'; city: '+optList('city').join('|')+'; brand: '+optList('brand').join('|')+'. Known clinics: '+S.clinics.map(c=>c.name).join('; ')+'. Omit keys you cannot determine. Return ONLY JSON.\n\nTEXT: '+txt}]}],generationConfig:{temperature:0,responseMimeType:'application/json'}};
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key='+encodeURIComponent(S.meta.aiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('AI '+r.status);
+  const j=await r.json();
+  return JSON.parse(j.candidates[0].content.parts[0].text);
+}
+function formSave(){
+  const v=form.vals,kind=form.kind;
+  if(!v.name||!v.name.trim()){toast('Name is needed');return;}
+  if(kind==='clinic'){
+    lastCity=v.city||lastCity;
+    let c=S.clinics.find(x=>nameEq(x.name,v.name));
+    const doctors=v.doctor?[v.doctor]:[];
+    if(c){Object.keys(v).forEach(k=>{if(k!=='doctor'&&v[k])c[k]=v[k];});doctors.forEach(dn=>{if(!c.doctors.some(x=>nameEq(x,dn)))c.doctors.push(dn);});toast(c.name+' updated ✓');}
+    else{
+      c={id:uid(),name:v.name.trim(),doctors,specialty:v.specialty||'Other',city:v.city||'',stage:v.stage||'Lead',source:v.source||'',phone:v.phone||'',reviews:v.reviews||'',whoAnswers:v.whoAnswers||'',whoAnswersPhone:v.whoAnswersPhone||'',brand:v.brand||'',handset:v.handset||'unverified',notes:v.notes||'',visits:[],stageHistory:[{date:todayISO(),stage:v.stage||'Lead'}]};
+      S.clinics.push(c);jlog('clinic',c.name+' added ('+c.stage+')');toast(c.name+' added ✓');
+    }
+    const created=linkClinicDoctor(c);linkClinicStaff(c);
+    if(created)setTimeout(()=>toast('Also added '+created+' to People ✓'),1800);
+  }else{
+    let p=S.people.find(x=>nameEq(x.name,v.name));
+    if(p){Object.keys(v).forEach(k=>{if(v[k])p[k]=v[k];});toast(p.name+' updated ✓');}
+    else{p=Object.assign({id:uid(),org:'',name:'',phone:'',role:'Doctor',specialty:'',clinic:'',city:'',source:'',influence:'',rel:'New',notes:''},v);p.name=v.name.trim();S.people.push(p);toast(p.name+' added ✓');}
+    linkPersonClinic(p);
+  }
+  form=null;closeModal();save();render();
+}
+
 function personWizard(pre){
   startWizard([
     {key:'name',label:'Who did you meet? Say the name.',required:true,hint:'e.g. “Dr. Ramesh Kulkarni”'},
@@ -1244,7 +1418,7 @@ function vToday(){
   const fu=openFU().filter(f=>!f.due||daysTo(f.due)<=2);
   const paying=payingCount(),live=liveCount();
   const days=daysTo('2026-11-13');
-  let h=greeting();
+  let h=greeting()+coachCard();
   const H=highlights();
   if(H.length)h+=H.map(x=>'<div class="hl '+x[0]+'"><i class="dot"></i><div>'+x[1]+'</div></div>').join('');
   h+='<div class="grid g4" style="margin-top:10px">'
@@ -1267,7 +1441,7 @@ function vToday(){
 function vTodayPilot(){
   const nowItems=S.sequence.filter(x=>x.bucket==='now'&&!x.done).slice(0,3);
   const fu=openFU().filter(f=>!f.due||daysTo(f.due)<=2);
-  let h=greeting();
+  let h=greeting()+coachCard();
   if(liveCount()>=3&&!S.meta.pilotNudged){
     h+='<div class="hl good"><i class="dot"></i><div>Gate 1 passed — 3 clinics live! 🎉 Worth switching to Full Mode for the bigger picture? <a href="#" onclick="S.meta.pilotNudged=true;setPilot(false);return false">Switch now</a> · <a href="#" onclick="S.meta.pilotNudged=true;save();render();return false">later</a></div></div>';
   }
@@ -1377,6 +1551,183 @@ function vPeople(){
     +'</div><div class="acts"><button onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button><button onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button><button onclick="editPerson(\''+p.id+'\')">Edit</button></div></div></div>';
   }).join('');
   return h;
+}
+
+/* ---------- DAILY COACH ----------
+   Layer 1: deterministic engine scores real opportunities using Vinay's own strategy rules.
+   Layer 2: Gemini sequences + explains them, grounded ONLY in these facts (cannot invent).      */
+function coachCandidates(){
+  const C=[],live=liveCount(),paying=payingCount();
+  const push=(score,kind,action,why,act)=>C.push({score,kind,action,why,act});
+
+  // 1. Overdue follow-ups — promises are the cheapest trust to lose
+  openFU().filter(f=>f.due&&daysTo(f.due)<0).forEach(f=>{
+    const d=-daysTo(f.due);
+    push(100+Math.min(d*3,40),'promise','Close: '+f.text+(f.who?' ('+f.who+')':''),
+      'Promised for '+fmtDs(f.due)+', now '+d+' day'+(d>1?'s':'')+' late. Slipping promises is how tier-2 relationships quietly die.',
+      f.who?{t:'person',n:f.who}:null);
+  });
+
+  // 2. Active clinic, recording not verified — hard gate, blocks everything downstream
+  S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)&&c.handset!=='ok').forEach(c=>{
+    push(95,'blocker','Run the recording test call at '+c.name,
+      'Stage is '+c.stage+' but the test call isn\'t verified'+(c.brand?'':' and the handset brand is unknown')+'. Until this passes, DeskLens cannot produce a single call for them.',
+      {t:'clinic',id:c.id});
+  });
+
+  // 3. Partial-recording handsets at active clinics — expectation risk
+  S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)&&PARTIAL_BRANDS.includes(c.brand)).forEach(c=>{
+    push(80,'risk','Confirm "Record Unknown Numbers" is ON at '+c.name,
+      c.brand+' captures only unknown-number incoming calls. Their data will be partial — say it before they discover it.',
+      {t:'clinic',id:c.id});
+  });
+
+  // 4. Audit clinics — the 7-day window is the sales motion; it must close
+  S.clinics.filter(c=>c.stage==='Audit (7-day)').forEach(c=>{
+    const lv=lastVisit(c),age=lv?daysAgo(lv):null;
+    push(90,'close','Take the audit results back to '+c.name,
+      'Free 7-day audit is your closing motion'+(age!==null?', and it\'s been '+age+' days since you were there':'')+'. Proof in hand converts better than any pitch.',
+      {t:'clinic',id:c.id});
+  });
+
+  // 5. Quiet active clinics — the field is the moat
+  S.clinics.filter(c=>['Design Partner','Pilot'].includes(c.stage)).forEach(c=>{
+    const lv=lastVisit(c),d=lv?daysAgo(lv):999;
+    if(d>=10)push(70+Math.min(d,25),'field','Visit '+c.name+(c.doctors&&c.doctors[0]?' — '+c.doctors[0]:''),
+      lv?('No visit logged in '+d+' days. Design partners go cold quietly.'):'No visit ever logged. Presence is the only thing a competitor can\'t copy.',
+      {t:'clinic',id:c.id});
+  });
+
+  // 6. High-value leads never approached — where founder-time compounds
+  S.clinics.filter(c=>c.stage==='Lead'&&parseInt(c.reviews||0)>=100&&!c.visits.length).forEach(c=>{
+    push(60+Math.min(parseInt(c.reviews)/50,20),'growth','Approach '+c.name+' ('+c.reviews+' reviews)',
+      'High review count means high call volume — the clinics that feel the missed-call problem most. Offer the free 7-day audit.',
+      {t:'clinic',id:c.id});
+  });
+
+  // 7. High-influence people with nothing planned — unopened doors
+  S.people.filter(p=>(p.influence||'').startsWith('High')&&!openFU().some(f=>nameEq(f.who,p.name))).forEach(p=>{
+    push(65,'leverage','Line up an ask with '+p.name,
+      'Marked high influence but nothing is scheduled. Referral introductions are your cheapest path to clinic 15.',
+      {t:'person',id:p.id});
+  });
+
+  // 8. Karthik blockers — build velocity
+  S.questions.filter(q=>q.status==='open'&&daysAgo(q.created)>=7).forEach(q=>{
+    push(72,'build','Get an answer from '+q.withWhom+': '+q.q,
+      'Open '+daysAgo(q.created)+' days. Architecture and compliance questions compound — every day unanswered is a day of possible rework.',
+      null);
+  });
+
+  // 9. Gate awareness
+  if(live<3)push(55,'gate','Push one clinic to pilot — you are at '+live+' of 3',
+    'Gate 1 is three live clinics. Everything after it (partners, reps, pricing confidence) waits on this number.',null);
+  else if(live<15)push(50,'gate',(15-live)+' clinics to the partner-activation gate',
+    'You are at '+live+' live. Founder-direct until 15 — that is the rule that keeps distribution learnable.',null);
+
+  // 10. Missing intelligence that shapes decisions
+  const noRev=S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)&&!c.reviews);
+  if(noRev.length)push(40,'data','Look up review counts for '+noRev.length+' active clinic'+(noRev.length>1?'s':''),
+    'Review count is your call-volume proxy — without it you cannot rank where to spend the next visit.',null);
+
+  // 11. Personal world
+  S.me.followups.filter(f=>!f.done&&f.due&&daysTo(f.due)<0).forEach(f=>{
+    push(58,'personal','Personal: '+f.text,'Overdue since '+fmtDs(f.due)+'. Founder life leaks into founder judgement.',null);
+  });
+
+  // 12. Hygiene
+  const bk=S.meta.lastBackup?daysAgo(S.meta.lastBackup):999;
+  if(bk>10)push(35,'hygiene','Take a backup','Last backup '+(S.meta.lastBackup?bk+' days ago':'never')+'. Sync covers device loss, backups cover mistakes.',null);
+
+  return C.sort((a,b)=>b.score-a.score);
+}
+function coachFacts(){
+  const live=liveCount(),paying=payingCount();
+  return {
+    date:todayISO(),
+    gate:{live,paying,next:live<3?3:live<8?8:live<15?15:400},
+    clinics:S.clinics.map(c=>({name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,
+      reviews:c.reviews||'',brand:c.brand||'unknown',recording:c.handset,
+      lastVisitDaysAgo:lastVisit(c)?daysAgo(lastVisit(c)):null,doctors:c.doctors||[]})),
+    people:S.people.map(p=>({name:p.name,role:p.role,influence:p.influence||'',rel:p.rel||'',clinic:p.clinic||''})),
+    followupsOpen:openFU().map(f=>({text:f.text,who:f.who,due:f.due,overdueDays:f.due?Math.max(0,-daysTo(f.due)):0})),
+    tasksNow:S.sequence.filter(t=>t.bucket==='now'&&!t.done).map(t=>t.title),
+    openQuestions:S.questions.filter(q=>q.status==='open').map(q=>({q:q.q,with:q.withWhom,ageDays:daysAgo(q.created)}))
+  };
+}
+async function runCoach(){
+  const cands=coachCandidates();
+  if(!cands.length){S.meta.coach={date:todayISO(),items:[],note:'Nothing pressing — a rare clean slate. Spend the day on new leads.'};save();render();return;}
+  if(!S.meta.aiKey){
+    S.meta.coach={date:todayISO(),src:'rules',items:cands.slice(0,5).map(c=>({action:c.action,why:c.why,kind:c.kind,act:c.act}))};
+    save();render();toast('Plan ready');return;
+  }
+  toast('Thinking about your day…');
+  try{
+    const prompt='You are chief of staff to Vinay, founder-CEO of DeskLens — AI call intelligence for clinics in tier-2/3 India (Kalaburagi). '
+      +'Strategy context: target 400 paying clinics at ₹6,000/month over ~24 months; gated rollout 3→8→15 clinics with founder-direct selling only until clinic 15; '
+      +'the moat is his physical field distribution network, not the tech; sales motion is a free 7-day call audit that produces proof; '
+      +'clinic phones must support OS-level call recording (Samsung/OnePlus/Oppo/Vivo/Realme/Redmi record everything; Motorola/Pixel only unknown-number incoming calls; iPhone/stock Android cannot) — an unverified handset blocks all value delivery. '
+      +'His time is the scarcest resource and physical visits are the highest-value use of it.\n\n'
+      +'Below are (A) the current state of his data and (B) opportunities already detected by a rules engine, with scores. '
+      +'Choose and SEQUENCE the best 4-5 actions for TODAY. Be specific — name the clinic or person and the concrete next step. '
+      +'Never invent a clinic, person or fact that is not in the data. Order them the way a sharp operator would actually run the day (grouping by geography where visible, hardest-blocking first). '
+      +'Return ONLY JSON: {"headline":"one sharp sentence about what today is really about","items":[{"action":"...","why":"one or two sentences of reasoning tied to his strategy","impact":"high|medium|low"}],"watch":"one risk he is not seeing","win":"one small thing that would compound if done today"}\n\n'
+      +'A) STATE:\n'+JSON.stringify(coachFacts())
+      +'\n\nB) DETECTED OPPORTUNITIES:\n'+JSON.stringify(cands.slice(0,14).map(c=>({score:c.score,kind:c.kind,action:c.action,why:c.why})));
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(S.meta.aiKey),
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,responseMimeType:'application/json'}})});
+    if(!r.ok)throw new Error('AI '+r.status);
+    const j=await r.json();
+    const out=JSON.parse(j.candidates[0].content.parts[0].text);
+    const items=(out.items||[]).map(it=>{
+      const m=cands.find(c=>c.action.toLowerCase().slice(0,18)===String(it.action||'').toLowerCase().slice(0,18))
+            ||cands.find(c=>String(it.action||'').toLowerCase().includes((c.act&&c.act.n||'').toLowerCase()));
+      return {action:it.action,why:it.why,impact:it.impact,act:m?m.act:null,kind:m?m.kind:''};
+    });
+    S.meta.coach={date:todayISO(),src:'ai',headline:out.headline||'',items,watch:out.watch||'',win:out.win||''};
+    save();render();toast('Your plan is ready');
+  }catch(e){
+    S.meta.coach={date:todayISO(),src:'rules',items:cands.slice(0,5).map(c=>({action:c.action,why:c.why,kind:c.kind,act:c.act}))};
+    save();render();toast('Used built-in planner (AI unavailable)');
+  }
+}
+function coachAct(i){
+  const it=(S.meta.coach&&S.meta.coach.items||[])[i];
+  if(!it||!it.act)return;
+  if(it.act.t==='clinic'&&it.act.id)openClinic(it.act.id);
+  else if(it.act.t==='person'&&it.act.id)openPerson(it.act.id);
+  else if(it.act.n)navTo(it.act.n);
+}
+function coachToTask(i){
+  const it=(S.meta.coach&&S.meta.coach.items||[])[i];if(!it)return;
+  S.sequence.push({id:uid(),title:it.action,bucket:'now',trigger:'',notes:it.why||'',link:autoLink(it.action),done:false,created:todayISO()});
+  save();render();toast('Added to Now ✓');
+}
+function coachCard(){
+  const c=S.meta.coach;
+  const fresh=c&&c.date===todayISO();
+  if(!fresh){
+    return '<div class="card" style="border-left:4px solid var(--teal);margin-bottom:12px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<div><b style="font-size:15px">Plan my day</b><div class="m" style="margin-top:2px">Reads your pipeline, promises and gates — then tells you what actually matters today.</div></div>'
+      +'<button class="btn sm" onclick="runCoach()">Build today\'s plan</button></div></div>';
+  }
+  let h='<div class="card" style="border-left:4px solid var(--teal);margin-bottom:12px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    +'<b style="font-size:15px">Today\'s plan</b>'
+    +'<div style="display:flex;gap:6px"><span class="pill grey">'+(c.src==='ai'?'AI':'rules')+'</span><button class="btn sm sec" onclick="runCoach()">Refresh</button></div></div>';
+  if(c.headline)h+='<div style="font-family:Newsreader,serif;font-size:16px;line-height:1.4;margin-bottom:10px">'+esc(c.headline)+'</div>';
+  if(!c.items.length)h+='<div class="m">'+esc(c.note||'Nothing pressing today.')+'</div>';
+  h+=c.items.map((it,i)=>'<div class="item" style="box-shadow:none;margin-bottom:8px">'
+    +'<div class="t" style="font-size:14px">'+(i+1)+'. '+esc(it.action)+(it.impact?' <span class="pill '+(it.impact==='high'?'red':it.impact==='medium'?'amber':'grey')+'">'+esc(it.impact)+'</span>':'')+'</div>'
+    +(it.why?'<div class="m">'+esc(it.why)+'</div>':'')
+    +'<div class="acts" style="margin-top:6px;justify-content:flex-start">'
+    +(it.act?'<button onclick="coachAct('+i+')">Open</button>':'')
+    +'<button onclick="coachToTask('+i+')">→ Now</button></div></div>').join('');
+  if(c.watch)h+='<div class="hl warn" style="margin-top:6px"><i class="dot"></i><div><b>Watch:</b> '+esc(c.watch)+'</div></div>';
+  if(c.win)h+='<div class="hl good"><i class="dot"></i><div><b>Quiet win:</b> '+esc(c.win)+'</div></div>';
+  return h+'</div>';
 }
 
 /* ---------- REPORTS ---------- */
@@ -2163,7 +2514,7 @@ const PARTIAL_BRANDS=['Motorola','Google Pixel'];
 const BAD_BRANDS=['iPhone','Stock Android / other'];
 const ACTIVE_STAGES=['Audit (7-day)','Design Partner','Pilot','Paying','Renewed'];
 function editClinic(id){
-  if(!id)return clinicWizard();
+  if(!id)return openForm('clinic');
   const c=S.clinics.find(x=>x.id===id);
   const oldStage=c.stage;
   openModal(id?'Edit clinic':'Add clinic',[
@@ -2209,7 +2560,7 @@ function editClinic(id){
 const CITIES=['Kalaburagi','Bidar','Vijayapura','Raichur','Yadgir','Ballari','Koppal','Bagalkot','Hubballi','Belagavi','Bengaluru','Other'];
 const SOURCES=['Referral — doctor','Referral — association','Personal network','Cold visit','Free call audit','Event / conference','Online','Other'];
 function editPerson(id){
-  if(!id)return personWizard();
+  if(!id)return openForm('person');
   const p=S.people.find(x=>x.id===id);
   const clinicOpts=['— none —',...S.clinics.map(c=>c.name)];
   openModal(id?'Edit person':'Add person',[
@@ -2325,7 +2676,7 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='8.2';
+const APP_VERSION='8.4';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
