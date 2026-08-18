@@ -186,7 +186,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.3</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v9.6</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
@@ -1032,7 +1032,7 @@ async function aiFillForm(txt,kind,audioBlob){
   const parts=[{text:instr}];
   if(txt)parts.push({text:'\n\nDESCRIPTION: '+txt});
   if(audioBlob)parts.push({inline_data:{mime_type:(audioBlob.type||'audio/webm').split(';')[0],data:await fileToB64(audioBlob)}});
-  return await gemini(parts,{prefer:audioBlob?null:'gemini-2.5-flash-lite'});
+  return await gemini(parts,{prefer:audioBlob?'gemini-2.5-flash':'gemini-2.5-flash-lite'});
 }
 function formSave(){
   clearTimeout(autoSaveT);autoSaveT=null;
@@ -1613,7 +1613,7 @@ function vTodayPilot(){
   }
   const H=highlights();
   if(H.length)h+=H.map(x=>'<div class="hl '+x[0]+'"><i class="dot"></i><div>'+x[1]+'</div></div>').join('');
-  h+='<h2>Follow-ups <span class="cnt">'+fu.length+'</span></h2>';
+  h+='<h2>Follow-ups <span class="cnt">'+fu.length+'</span>'+(fu.length?'<button class="btn sm sec" style="margin-left:auto" onclick="exportFUs(\'today\')">📅 To calendar</button>':'')+'</h2>';
   h+=fu.length?fu.map(f=>fuItem(f)).join(''):'<div class="empty">Nothing due. The + button feeds this.</div>';
   h+='<h2>Top of Now <span class="cnt">'+nowItems.length+'</span></h2>';
   h+=nowItems.map(seqItem).join('')||'<div class="empty">Nothing in Now — see More → Sequence.</div>';
@@ -1722,26 +1722,39 @@ function vPeople(){
 }
 
 /* ---------- ONE DOOR TO GEMINI: finds a model that works on this key, remembers it ---------- */
-const GEM_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-flash-latest','gemini-2.5-flash-lite','gemini-2.0-flash-lite','gemini-1.5-flash'];
+/* Gemini 2.5 family only — Flash for audio/analysis, Flash-Lite for light extraction.
+   The "-latest" aliases point at the same 2.5 models and are kept as fallbacks. */
+const GEM_MODELS=['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-flash-latest','gemini-flash-lite-latest'];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function gemini(parts,opts){
   opts=opts||{};
   if(!S.meta.aiKey)throw new Error('No Gemini key — Data tab → AI power');
   const order=[...new Set([opts.prefer,S.meta.aiModel,...GEM_MODELS].filter(Boolean))];
-  const notes=[];
+  const notes=[];let busy=false;const deadline=Date.now()+14000;
   for(const m of order){
-    try{
-      const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+encodeURIComponent(S.meta.aiKey),
-        {method:'POST',headers:{'Content-Type':'application/json'},
-         body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:opts.temp||0,responseMimeType:'application/json'}})});
-      if(r.status===404||r.status===400||r.status===403){notes.push(m+'→'+r.status);continue;}
-      if(!r.ok){notes.push(m+'→'+r.status);continue;}
-      const j=await r.json();
-      const txt=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts[0].text;
-      if(!txt){notes.push(m+'→empty');continue;}
-      if(S.meta.aiModel!==m){S.meta.aiModel=m;localStorage.setItem(LS_KEY,JSON.stringify(S));}
-      return JSON.parse(txt);
-    }catch(e){notes.push(m+'→'+(e.message||'err'));}
+    if(Date.now()>deadline)break;
+    for(let attempt=0;attempt<3;attempt++){
+      if(Date.now()>deadline){busy=busy||true;break;}
+      try{
+        const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+m+':generateContent?key='+encodeURIComponent(S.meta.aiKey),
+          {method:'POST',headers:{'Content-Type':'application/json'},
+           body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:opts.temp||0,responseMimeType:'application/json'}})});
+        if(r.status===404||r.status===400||r.status===403){notes.push(m+'→'+r.status);break;}     // wrong model/key: next model
+        if(r.status===503||r.status===429||r.status===500){                                        // busy: wait and retry SAME model
+          busy=true;notes.push(m+'→'+r.status);
+          if(attempt<2){if(opts.onRetry)opts.onRetry(attempt+1);await sleep(1500*(attempt+1));continue;}
+          break;
+        }
+        if(!r.ok){notes.push(m+'→'+r.status);break;}
+        const j=await r.json();
+        const txt=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts[0].text;
+        if(!txt){notes.push(m+'→empty');break;}
+        if(S.meta.aiModel!==m){S.meta.aiModel=m;localStorage.setItem(LS_KEY,JSON.stringify(S));}
+        return JSON.parse(txt);
+      }catch(e){notes.push(m+'→'+(e.message||'err'));break;}
+    }
   }
+  if(busy)throw new Error('Google’s AI servers are busy right now (503). Your key is fine — wait a few seconds and tap again. Long recordings hit this more often; a shorter clip or pasted notes will go through.');
   throw new Error('No working model on your key ('+notes.slice(0,3).join(', ')+'). Check the key in Data → AI power.');
 }
 
@@ -1869,11 +1882,19 @@ async function convRun(){
     const parts=[{text:instruction}];
     if(txt)parts.push({text:'\n\nTRANSCRIPT / NOTES:\n'+txt});
     if(f)parts.push({inline_data:{mime_type:(f.type||'audio/mpeg').split(';')[0],data:await fileToB64(f)}});
-    conv.out=await gemini(parts,{temp:0.1});
+    conv.out=await gemini(parts,{temp:0.1,prefer:'gemini-2.5-flash',onRetry:n=>{
+      const m=$('modal');if(m)m.innerHTML='<h3>Servers are busy…</h3><div class="note">Google’s AI is under load. Retrying (attempt '+(n+1)+' of 3) — nothing is lost.</div>';
+    }});
     conv.date=date;conv.src=f?'recording':'notes';
     rec.blob=null;
     renderConvReview();
-  }catch(e){rec.blob=null;alert('Could not read that: '+e.message);renderConvInput();}
+  }catch(e){
+    rec.blob=null;
+    conv._keep={txt:txt,date:date};                    // don't lose what he typed
+    alert('Could not read that.\n\n'+e.message);
+    renderConvInput();
+    setTimeout(()=>{const t=$('cvtxt');if(t&&conv&&conv._keep)t.value=conv._keep.txt||'';},50);
+  }
 }
 function renderConvReview(){
   const o=conv.out||{};
@@ -2051,7 +2072,7 @@ async function runCoach(){
       +'Return ONLY JSON: {"headline":"one sharp sentence about what today is really about","items":[{"action":"...","why":"one or two sentences of reasoning tied to his strategy","impact":"high|medium|low"}],"watch":"one risk he is not seeing","win":"one small thing that would compound if done today"}\n\n'
       +'A) STATE:\n'+JSON.stringify(coachFacts())
       +'\n\nB) DETECTED OPPORTUNITIES:\n'+JSON.stringify(cands.slice(0,14).map(c=>({score:c.score,kind:c.kind,action:c.action,why:c.why})));
-    const out=await gemini([{text:prompt}],{temp:0.3});
+    const out=await gemini([{text:prompt}],{temp:0.3,prefer:'gemini-2.5-flash'});
     const items=(out.items||[]).map(it=>{
       const m=cands.find(c=>c.action.toLowerCase().slice(0,18)===String(it.action||'').toLowerCase().slice(0,18))
             ||cands.find(c=>String(it.action||'').toLowerCase().includes((c.act&&c.act.n||'').toLowerCase()));
@@ -2451,6 +2472,15 @@ function vData(){
       +'<button class="btn sm" onclick="installApp()">Install DeskLens HQ</button>'
       +'<div class="note">No prompt? Chrome ⋮ menu → “Install app” / “Add to Home screen”.</div></div>';
   }
+  h+='<h2>Reminders <span class="pill '+(S.meta.notif?'green':'grey')+'">'+(S.meta.notif?'pop-ups on':'pop-ups off')+'</span></h2><div class="card">'
+    +'<p style="font-size:13.5px;line-height:1.6">Two kinds: <b>calendar alerts</b> reach you even when the app is closed (works on every device), and <b>pop-ups</b> nudge you while the app is open.</p>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">'
+    +'<button class="btn sm" onclick="exportFUs(\'today\')">📅 Today → calendar</button>'
+    +'<button class="btn sm sec" onclick="exportFUs(\'week\')">📅 This week → calendar</button>'
+    +'<button class="btn sm sec" onclick="dailyReminder()">⏰ Daily reminder</button>'
+    +(S.meta.notif?'':'<button class="btn sm sec" onclick="enableNotifs()">🔔 Turn on pop-ups</button>')
+    +'</div>'
+    +'<div class="note">Open the downloaded file once and the events land in your phone’s calendar with a 30-minute alert each.</div></div>';
   h+='<h2>Cloud sync — laptop ↔ phone</h2><div class="card">';
   if(!cfg){
     h+='<p style="font-size:13.5px;line-height:1.6">Paste your Firebase config (Project settings → Your apps → the <b>{ ... }</b> block). Your data syncs live between devices; only your signed-in account can read it.</p>'
@@ -2485,7 +2515,8 @@ function vData(){
     +'<p style="font-size:13.5px;line-height:1.6">Paste a free Gemini API key and Smart Dump upgrades from rule-based to real AI understanding of your voice. Get one in 2 minutes: <b>aistudio.google.com</b> → sign in → “Get API key” → Create → copy → paste below. The key lives only in this browser (and your backups).</p>'
     +'<div class="f" style="margin-top:10px"><label>Gemini API key</label><input id="aikey" type="password" value="'+esc(S.meta.aiKey||'')+'" placeholder="AIza…"></div>'
     +'<button class="btn sm" onclick="saveAIKey()">Save key</button> <button class="btn sm sec" onclick="testAI()">Test AI</button> '
-    +(S.meta.aiModel?'<div class="note">Using model: <b>'+esc(S.meta.aiModel)+'</b></div>':'')
+    +'<div class="note">Models used: <b>Gemini 2.5 Flash</b> for recordings, conversations and your daily plan · <b>Gemini 2.5 Flash-Lite</b> for quick extraction. Nothing older is used.'
+    +(S.meta.aiModel?'<br>Currently answering: <b>'+esc(S.meta.aiModel)+'</b>':'')+'</div>'
     +'<span class="subtle">'+(S.meta.aiKey?'AI sorting is ON ✓':'AI sorting is OFF — using built-in rules')+'</span></div>';
   h+='<h2>How to use this app — the right order</h2><div class="card"><div style="font-size:13.5px;line-height:1.75;color:var(--ink)">'
     +'<b>The daily rhythm</b><br>'
@@ -2813,6 +2844,68 @@ function editFU(id,sp){
     save();render();
   },id?()=>{b.followups=b.followups.filter(x=>x.id!==id);save();render();}:null);
 }
+/* ---------- NOTIFICATIONS ---------- */
+function icsEvent(uid,dateISO,time,title,desc,rrule){
+  const t=(time||'10:00').replace(':','');
+  const d=dateISO.replace(/-/g,'');
+  const endH=String(Math.min(23,parseInt(t.slice(0,2))+1)).padStart(2,'0');
+  return 'BEGIN:VEVENT\r\nUID:'+uid+'@desklenshq\r\nDTSTART:'+d+'T'+t+'00\r\nDTEND:'+d+'T'+endH+t.slice(2)+'00\r\n'
+    +(rrule?'RRULE:'+rrule+'\r\n':'')
+    +'SUMMARY:'+String(title).replace(/[,;\\]/g,' ')+'\r\n'
+    +(desc?'DESCRIPTION:'+String(desc).replace(/[,;\\]/g,' ')+'\r\n':'')
+    +'BEGIN:VALARM\r\nTRIGGER:-PT30M\r\nACTION:DISPLAY\r\nDESCRIPTION:'+String(title).replace(/[,;\\]/g,' ')+'\r\nEND:VALARM\r\nEND:VEVENT\r\n';
+}
+function icsDownload(body,name){
+  const blob=new Blob(['BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//DeskLensHQ//EN\r\nCALSCALE:GREGORIAN\r\n'+body+'END:VCALENDAR'],{type:'text/calendar'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href);
+}
+function exportFUs(range){
+  const list=allFU().filter(x=>{
+    if(!x.f.due)return false;
+    const d=daysTo(x.f.due);
+    return range==='today'?d<=0:d<=7;
+  });
+  if(!list.length){toast('Nothing due '+(range==='today'?'today':'this week'));return;}
+  let body='';
+  list.forEach(x=>{body+=icsEvent(x.f.id,daysTo(x.f.due)<0?todayISO():x.f.due,x.f.time,x.f.text+(x.f.who?' — '+x.f.who:''),(x.sp==='dl'?'DeskLens':'Personal')+' follow-up');});
+  icsDownload(body,'desklens-followups-'+range+'-'+todayISO()+'.ics');
+  toast(list.length+' reminder'+(list.length>1?'s':'')+' → open the file to add them');
+}
+function dailyReminder(){
+  openModal('Daily reminder',[
+    {key:'time',label:'What time each day?',type:'time',value:'09:00'},
+    {key:'days',label:'Which days?',type:'select',options:['Every day','Weekdays only'],value:'Every day'}
+  ],v=>{
+    const rrule=v.days==='Weekdays only'?'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR':'FREQ=DAILY';
+    icsDownload(icsEvent('dailyhq','20260818'.replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3').replace(/-/g,'-')===''?todayISO():todayISO(),v.time,'DeskLens HQ — check the day','Open your plan, follow-ups and inbox',rrule),'desklens-daily-reminder.ics');
+    toast('Open the file to add the daily alarm');
+  },null,'Create reminder');
+}
+async function enableNotifs(){
+  if(!('Notification' in window)){alert('This browser can’t show notifications. The calendar route works everywhere — use “Send to calendar”.');return;}
+  const p=await Notification.requestPermission();
+  S.meta.notif=(p==='granted');save();render();
+  if(p==='granted'){new Notification('DeskLens HQ',{body:'Notifications are on. You’ll be nudged about anything overdue while the app is open.',icon:'./icon-192.png'});}
+  else toast('Permission denied — you can change it in site settings');
+}
+function notifyDue(){
+  if(!S.meta.notif||!('Notification' in window)||Notification.permission!=='granted')return;
+  const today=todayISO();
+  if(S.meta.notifDate===today)return;                      // once a day
+  const od=allFU().filter(x=>x.f.due&&daysTo(x.f.due)<0);
+  const due=allFU().filter(x=>x.f.due&&daysTo(x.f.due)===0);
+  if(!od.length&&!due.length)return;
+  const parts=[];
+  if(od.length)parts.push(od.length+' overdue');
+  if(due.length)parts.push(due.length+' due today');
+  try{
+    new Notification('DeskLens HQ — '+parts.join(', '),{
+      body:(od[0]||due[0]).f.text+((od[0]||due[0]).f.who?' · '+(od[0]||due[0]).f.who:''),
+      icon:'./icon-192.png',tag:'dlhq-due'
+    });
+    S.meta.notifDate=today;localStorage.setItem(LS_KEY,JSON.stringify(S));
+  }catch(e){}
+}
 function icsFU(id,sp){
   const f=fuFind(id,sp);if(!f||!f.due)return toast('Set a due date first');
   const t=(f.time||'10:00').replace(':','');
@@ -3065,8 +3158,9 @@ localStorage.setItem(LS_KEY,JSON.stringify(S));
 render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
+setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='9.3';
+const APP_VERSION='9.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
