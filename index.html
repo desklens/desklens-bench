@@ -293,8 +293,9 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v10.8</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v11.1</span></div>
     <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
       <div class="spacesw" id="spacesw"></div><span id="syncdot"></span><div class="hdate" id="hdate"></div>
     </div>
@@ -1529,6 +1530,7 @@ document.addEventListener('keydown',e=>{
   const typing=/INPUT|TEXTAREA|SELECT/.test((e.target.tagName||''));
   if(typing)return;
   if(e.key==='/'||((e.metaKey||e.ctrlKey)&&e.key==='k')){e.preventDefault();openSearch();}
+  else if(e.key==='a'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();openAsk();}
   else if(e.key==='n'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();openCapture();}
   else if(e.key==='Escape')closeModal();
 });
@@ -2068,8 +2070,8 @@ function openConv(kind,id){
   renderConvInput();
 }
 function renderConvInput(){
-  $('modal').innerHTML='<h3>Log a conversation — '+esc(conv.name)+'</h3>'
-    +'<div class="note" style="margin-bottom:10px">Upload the call recording, or paste/dictate what was discussed. I’ll pull out the key points, promises and objections — you review before anything is saved.</div>'
+  $('modal').innerHTML='<h3>Log — '+esc(conv.name)+'</h3>'
+    +'<div class="note" style="margin-bottom:10px">One place for everything: say what happened and I’ll produce the <b>visit</b>, the <b>key points</b>, <b>promises → follow-ups</b>, <b>tasks</b> and any <b>stage change</b>. You review before anything saves.</div>'
     +'<div class="f"><label>Call recording file (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
     +'<div class="subtle" style="text-align:center;margin:6px 0">— or —</div>'
     +'<div class="f"><label>What was discussed</label><textarea id="cvtxt" style="min-height:120px" placeholder="Dictate or paste the transcript…"></textarea></div>'
@@ -2106,6 +2108,8 @@ async function convRun(){
     +'"commitments":[{"who":"Vinay or their name","what":"promise","due":"YYYY-MM-DD or empty"}],'
     +'"objections":["pushback in their words"],"pricing":["price/budget/competitor mentions"],'
     +'"people":[{"name":"","role":""}],"nextStep":"clearest next action",'
+    +'"wasVisit":true_if_he_physically_went_there_else_false,"visitTime":"HH:MM if a time was mentioned else empty",'
+    +'"tasks":["things Vinay must do himself that are not promises to them"],'
     +'"tags":["pick 1-4 from: '+CONV_TAGS.join(', ')+'"],'
     +'"suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|","sentimentNote":"one line on how warm or hesitant"}';
   try{
@@ -2157,7 +2161,17 @@ function renderConvReview(){
       +o.commitments.map((c,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px"><input type="checkbox" id="cvc'+i+'" checked style="margin-top:3px"><span><b>'+esc(c.what||'')+'</b><br><span class="subtle">'+esc(c.who||'')+(c.due?' · due '+esc(c.due):' · no date')+'</span></span></label>').join('')
       +'</div>';
   }
-  if(o.nextStep)h+='<div class="hl info"><i class="dot"></i><div><b>Next step:</b> '+esc(o.nextStep)+' <label style="margin-left:6px"><input type="checkbox" id="cvnext" checked> add as task</label></div></div>';
+  const visitGuess=(o.wasVisit===true)||/\b(visited|went to|met at|at the clinic|in person)\b/i.test((o.summary||'')+' '+(conv._keep&&conv._keep.txt||''));
+  h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">File this as</b>'
+    +'<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:13.5px"><input type="checkbox" id="cvvisit"'+(visitGuess?' checked':'')+'> Log a visit on '+fmtD(conv.date)
+    +' <input type="time" id="cvvtime" value="'+esc(o.visitTime||'')+'" style="width:110px;padding:6px;font-size:13px;border:1.5px solid var(--line);border-radius:9px"></label>'
+    +'<div class="note">The summary and key points are always saved to the trail. Tick this if you were physically there.</div></div>';
+  if(o.tasks&&o.tasks.length){
+    h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Tasks for you</b>'
+      +o.tasks.map((t,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px"><input type="checkbox" id="cvt'+i+'" checked style="margin-top:3px"><span>'+esc(t)+'</span></label>').join('')
+      +'</div>';
+  }
+  if(o.nextStep)h+='<div class="hl info"><i class="dot"></i><div><b>Next step:</b> '+esc(o.nextStep)+' <label style="margin-left:6px"><input type="checkbox" id="cvnext" checked> add to Now</label></div></div>';
   if(o.suggestedStage&&conv.kind==='clinic'&&o.suggestedStage!==conv.stage)
     h+='<div class="hl warn"><i class="dot"></i><div>Move stage to <b>'+esc(o.suggestedStage)+'</b>? <label style="margin-left:6px"><input type="checkbox" id="cvstage"> yes</label></div></div>';
   h+='<div class="mbtns"><button class="btn sec" onclick="renderConvInput()">← Redo</button><button class="btn" onclick="convSave()">Save to '+esc(conv.name.split(' ')[0])+' ✓</button></div>';
@@ -2170,7 +2184,20 @@ function convSave(){
   obj.calls.push({id:uid(),date:conv.date,ts:nowStamp(),src:conv.src,summary:o.summary||'',points:o.points||[],
     objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||'',
     tags:convTagsFrom(o)});
-  let n=0;
+  let n=0,vlog=0,tlog=0;
+  // visit
+  if($('cvvisit')&&$('cvvisit').checked&&conv.kind==='clinic'){
+    obj.visits=obj.visits||[];
+    obj.visits.push({date:conv.date,time:($('cvvtime')&&$('cvvtime').value)||'',note:o.summary||'',ts:nowStamp()});
+    jlog('visit','Visited '+obj.name+(o.summary?' — '+o.summary.slice(0,70):''),conv.date);
+    vlog=1;
+  }
+  // tasks
+  (o.tasks||[]).forEach((t,i)=>{
+    const cb=$('cvt'+i);if(cb&&!cb.checked)return;
+    S.sequence.push({id:uid(),title:cleanEntry(t,false)||t,bucket:'queued',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:obj.name,done:false,created:todayISO(),ts:nowStamp()});
+    tlog++;
+  });
   (o.commitments||[]).forEach((c,i)=>{
     const cb=$('cvc'+i);if(cb&&!cb.checked)return;
     const mine=/vinay|me|i\b/i.test(c.who||'');
@@ -2195,12 +2222,22 @@ function convSave(){
   });
   jlog('call','Conversation logged — '+obj.name+(o.summary?': '+o.summary.slice(0,70):''),conv.date);
   conv=null;closeModal();save();render();
-  toast('Saved'+(n?' · '+n+' follow-up'+(n>1?'s':'')+' created':''));
+  const bits=[];
+  if(vlog)bits.push('visit logged');
+  if(n)bits.push(n+' follow-up'+(n>1?'s':''));
+  if(tlog)bits.push(tlog+' task'+(tlog>1?'s':''));
+  toast('Saved'+(bits.length?' · '+bits.join(' · '):''));
 }
 
 /* ---------- DAILY COACH ----------
    Layer 1: deterministic engine scores real opportunities using Vinay's own strategy rules.
    Layer 2: Gemini sequences + explains them, grounded ONLY in these facts (cannot invent).      */
+function allConvs(){
+  const rows=[];
+  S.clinics.forEach(c=>(c.calls||[]).forEach(v=>rows.push({who:c.name,id:c.id,kind:'clinic',obj:c,v})));
+  S.people.forEach(p=>(p.calls||[]).forEach(v=>rows.push({who:p.name,id:p.id,kind:'person',obj:p,v})));
+  return rows.sort((a,b)=>String(b.v.date).localeCompare(String(a.v.date)));
+}
 function coachCandidates(){
   const C=[],live=liveCount(),paying=payingCount();
   const push=(score,kind,action,why,act)=>C.push({score,kind,action,why,act});
@@ -2280,6 +2317,34 @@ function coachCandidates(){
     push(58,'personal','Personal: '+f.text,'Overdue since '+fmtDs(f.due)+'. Founder life leaks into founder judgement.',null);
   });
 
+  // 11b. What conversations are telling you
+  allConvs().slice(0,25).forEach(x=>{
+    const v=x.v,d=daysAgo(v.date);
+    // a stated next step that never became a task or follow-up
+    if(v.nextStep&&d>=2){
+      const done=[...S.sequence,...S.me.sequence].some(t=>t.title.toLowerCase().includes(v.nextStep.toLowerCase().slice(0,18)))
+        ||allFU().some(f=>f.f.text.toLowerCase().includes(v.nextStep.toLowerCase().slice(0,18)));
+      if(!done)push(78,'dropped','Nothing scheduled after '+x.who+': “'+v.nextStep+'”',
+        'You named this as the next step '+d+' days ago and nothing was created. Conversations decay into nothing exactly here.',
+        x.kind==='clinic'?{t:'clinic',id:x.id}:{t:'person',id:x.id});
+    }
+    // an objection with no follow-up since
+    if((v.objections||[]).length&&d>=3&&!allFU().some(f=>nameEq(f.f.who,x.who))){
+      push(68,'objection','Answer '+x.who+'’s concern: “'+v.objections[0]+'”',
+        'Raised '+d+' days ago and nothing is scheduled with them. Unanswered objections harden into a no.',
+        x.kind==='clinic'?{t:'clinic',id:x.id}:{t:'person',id:x.id});
+    }
+    // they shared recordings — the fastest proof loop you have
+    if((v.tags||[]).includes('Recordings shared')&&d>=2){
+      push(74,'proof','Send '+x.who+' what their recordings revealed',
+        'They handed over real audio '+d+' days ago. Turning their own calls into findings is your strongest close.',
+        x.kind==='clinic'?{t:'clinic',id:x.id}:{t:'person',id:x.id});
+    }
+  });
+  // repeated feature ask across contacts
+  const feat=allConvs().filter(x=>(x.v.tags||[]).includes('Feature request'));
+  if(feat.length>=2)push(52,'product',feat.length+' clinics have now asked for the same kind of feature',
+    'Feature requests are stacking up ('+[...new Set(feat.map(f=>f.who))].slice(0,3).join(', ')+'). Worth turning into a decision with Karthik rather than a memory.',null);
   // 12. Hygiene
   const bk=S.meta.lastBackup?daysAgo(S.meta.lastBackup):999;
   if(bk>10)push(35,'hygiene','Take a backup','Last backup '+(S.meta.lastBackup?bk+' days ago':'never')+'. Sync covers device loss, backups cover mistakes.',null);
@@ -2297,6 +2362,8 @@ function coachFacts(){
     people:S.people.map(p=>({name:p.name,role:p.role,influence:p.influence||'',rel:p.rel||'',clinic:p.clinic||''})),
     followupsOpen:openFU().map(f=>({text:f.text,who:f.who,due:f.due,overdueDays:f.due?Math.max(0,-daysTo(f.due)):0})),
     tasksNow:S.sequence.filter(t=>t.bucket==='now'&&!t.done).map(t=>t.title),
+    conversations:allConvs().slice(0,15).map(x=>({with:x.who,daysAgo:daysAgo(x.v.date),tags:x.v.tags||[],
+      said:(x.v.summary||'').slice(0,220),objections:x.v.objections||[],pricing:x.v.pricing||[],nextStep:x.v.nextStep||''})),
     openQuestions:S.questions.filter(q=>q.status==='open').map(q=>({q:q.q,with:q.withWhom,ageDays:daysAgo(q.created)}))
   };
 }
@@ -2309,16 +2376,12 @@ async function runCoach(){
   }
   toast('Thinking about your day…');
   try{
-    const prompt='You are chief of staff to Vinay, founder-CEO of DeskLens — AI call intelligence for clinics in tier-2/3 India (Kalaburagi). '
-      +'Strategy context: target 400 paying clinics at ₹6,000/month over ~24 months; gated rollout 3→8→15 clinics with founder-direct selling only until clinic 15; '
-      +'the moat is his physical field distribution network, not the tech; sales motion is a free 7-day call audit that produces proof; '
-      +'clinic phones must support OS-level call recording (Samsung/OnePlus/Oppo/Vivo/Realme/Redmi record everything; Motorola/Pixel only unknown-number incoming calls; iPhone/stock Android cannot) — an unverified handset blocks all value delivery. '
-      +'His time is the scarcest resource and physical visits are the highest-value use of it.\n\n'
-      +'Below are (A) the current state of his data and (B) opportunities already detected by a rules engine, with scores. '
+    const prompt=BRAIN_BRIEF+'\n\n'
+      +'Below are (A) the complete state of his command centre and (B) opportunities already detected by a rules engine, with scores. '
       +'Choose and SEQUENCE the best 4-5 actions for TODAY. Be specific — name the clinic or person and the concrete next step. '
       +'Never invent a clinic, person or fact that is not in the data. Order them the way a sharp operator would actually run the day (grouping by geography where visible, hardest-blocking first). '
       +'Return ONLY JSON: {"headline":"one sharp sentence about what today is really about","items":[{"action":"...","why":"one or two sentences of reasoning tied to his strategy","impact":"high|medium|low"}],"watch":"one risk he is not seeing","win":"one small thing that would compound if done today"}\n\n'
-      +'A) STATE:\n'+JSON.stringify(coachFacts())
+      +'A) STATE:\n'+JSON.stringify(brainContext())
       +'\n\nB) DETECTED OPPORTUNITIES:\n'+JSON.stringify(cands.slice(0,14).map(c=>({score:c.score,kind:c.kind,action:c.action,why:c.why})));
     const out=await gemini([{text:prompt}],{temp:0.3,prefer:'gemini-2.5-flash'});
     const items=(out.items||[]).map(it=>{
@@ -2368,6 +2431,171 @@ function coachCard(){
     +'<button onclick="coachToTask('+i+')">→ Now</button></div></div>').join('');
   if(c.watch)h+='<div class="hl warn" style="margin-top:6px"><i class="dot"></i><div><b>Watch:</b> '+esc(c.watch)+'</div></div>';
   if(c.win)h+='<div class="hl good"><i class="dot"></i><div><b>Quiet win:</b> '+esc(c.win)+'</div></div>';
+  return h+'</div>';
+}
+
+/* ---------- THE BRAIN: everything in the app, shaped for analysis ---------- */
+const cut=(s,n)=>String(s||'').slice(0,n);
+function brainContext(){
+  const live=liveCount(),paying=payingCount();
+  const srcStats={};
+  S.clinics.forEach(c=>{if(c.stage==='Lost')return;const k=c.source||'(not recorded)';srcStats[k]=srcStats[k]||{leads:0,active:0,paying:0};
+    srcStats[k].leads++;if(ACTIVE_STAGES.includes(c.stage))srcStats[k].active++;if(['Paying','Renewed'].includes(c.stage))srcStats[k].paying++;});
+  const tagCount={};
+  allConvs().forEach(x=>(x.v.tags||[]).forEach(t=>tagCount[t]=(tagCount[t]||0)+1));
+  return {
+    today:todayISO(),
+    business:{targetClinics:400,acv:'₹6,000/month (₹72,000/yr)',gate:{live,paying,next:live<3?3:live<8?8:live<15?15:400},
+      stabilisationEnds:'2026-11-13',motion:'free 7-day call audit',moat:'tier-2/3 field distribution network'},
+    clinics:S.clinics.slice(0,60).map(c=>({
+      name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,source:c.source||'',
+      doctors:c.doctors||[],receptionist:c.whoAnswers||'',reviews:c.reviews||'',
+      handsetBrand:c.brand||'unknown',recordingCapable:brandClass(c.brand),recordingTested:c.handset,
+      visits:(c.visits||[]).length,lastVisitDaysAgo:lastVisit(c)?daysAgo(lastVisit(c)):null,
+      stageHistory:(c.stageHistory||[]).map(s=>s.stage+'@'+s.date),
+      notes:cut(c.notes,200),
+      conversations:(c.calls||[]).slice(-4).map(v=>({daysAgo:daysAgo(v.date),tags:v.tags||[],said:cut(v.summary,220),
+        points:(v.points||[]).slice(0,4),objections:v.objections||[],pricing:v.pricing||[],nextStep:v.nextStep||''}))
+    })),
+    people:S.people.slice(0,60).map(p=>({name:p.name,role:p.role,specialty:p.specialty||'',clinic:p.clinic||'',
+      city:p.city||'',influence:p.influence||'',relationship:p.rel||'',source:p.source||'',notes:cut(p.notes,160),
+      conversations:(p.calls||[]).slice(-3).map(v=>({daysAgo:daysAgo(v.date),tags:v.tags||[],said:cut(v.summary,200),objections:v.objections||[],pricing:v.pricing||[]}))})),
+    followupsOpen:allFU().map(x=>({text:cut(x.f.text,120),who:x.f.who,due:x.f.due,overdueDays:x.f.due?Math.max(0,-daysTo(x.f.due)):0,space:x.sp})),
+    sequence:{now:S.sequence.filter(t=>t.bucket==='now'&&!t.done).map(t=>cut(t.title,110)),
+      queued:S.sequence.filter(t=>t.bucket==='queued'&&!t.done).map(t=>cut(t.title,110)),
+      parked:S.sequence.filter(t=>t.bucket==='parked'&&!t.done).map(t=>cut(t.title,80)+(t.trigger?' [trigger: '+cut(t.trigger,60)+']':'')),
+      recentlyDone:S.sequence.filter(t=>t.done).slice(-8).map(t=>cut(t.title,90))},
+    decisions:S.decisions.slice(-14).map(d=>({date:d.date,decision:cut(d.title,140),why:cut(d.why,220)})),
+    openQuestions:S.questions.filter(q=>q.status==='open').map(q=>({q:cut(q.q,160),with:q.withWhom,ageDays:daysAgo(q.created)})),
+    resolvedQuestions:S.questions.filter(q=>q.status==='resolved').slice(-6).map(q=>({q:cut(q.q,120),answer:cut(q.resolution,120)})),
+    derived:{sourcePerformance:srcStats,conversationTagCounts:tagCount,
+      handsetRisk:S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)&&brandClass(c.brand)!=='full').map(c=>c.name+' ('+(c.brand||'unknown')+')'),
+      quietClinics:S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)).filter(c=>{const lv=lastVisit(c);return !lv||daysAgo(lv)>=10;}).map(c=>c.name)},
+    personal:{goals:S.me.goals.map(g=>({goal:cut(g.title,120),horizon:g.horizon,progress:g.progress,lastCheckin:(g.checkins||[]).slice(-1)[0]||null}),{}),
+      openPersonal:S.me.followups.filter(f=>!f.done).length,routines:S.me.routines.map(r=>r.text)}
+  };
+}
+const BRAIN_BRIEF='You are chief of staff and analyst to Vinay, founder-CEO of DeskLens — AI call intelligence sold to clinics in tier-2/3 India (based in Kalaburagi). '
+  +'Model: ₹6,000/month per clinic, target 400 clinics in ~24 months, gated rollout 3→8→15 clinics with founder-direct selling only until clinic 15. '
+  +'The moat is his physical field distribution network, not the technology. Sales motion is a free 7-day call audit that produces proof from the clinic\'s own calls. '
+  +'A clinic can only be served if its phone supports OS-level recording (Samsung/OnePlus/Oppo/Vivo/Realme/Redmi record everything; Motorola/Pixel only unknown-number incoming calls; iPhone/stock Android cannot). '
+  +'His time is the scarcest resource; physical visits are its highest-value use. Below is the complete state of his command centre — clinics, people, conversations, promises, tasks, decisions and open questions. '
+  +'Reason from this data only. Never invent a clinic, person, number or quote. If the evidence is thin, say so.';
+
+/* ---------- ASK YOUR DATA ---------- */
+const ASK_SUGGESTIONS=['Which clinic should I visit tomorrow and why?','What is blocking clinic 3?','Where am I losing momentum?','What should I change about my pitch?','Who is my strongest referral path right now?','What am I avoiding?'];
+async function askBrain(q){
+  if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
+  q=(q||'').trim();if(!q)return;
+  S.meta.ask={q,loading:true};render();
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF+'\n\nQUESTION FROM VINAY: '+q
+      +'\n\nAnswer as a sharp operator who has read everything. Be concrete, name clinics and people, quote what they said. '
+      +'Return ONLY JSON: {"answer":"2-5 sentences, direct","evidence":["specific facts from the data that support it"],"actions":[{"do":"a concrete next action","why":"one line"}],"caveat":"what the data cannot tell you, if relevant"}'
+      +'\n\nSTATE:\n'+JSON.stringify(brainContext())}],{temp:0.3,prefer:'gemini-2.5-flash'});
+    S.meta.ask={q,out,at:nowStamp()};save();render();
+  }catch(e){S.meta.ask={q,error:e.message};render();}
+}
+function askCard(){
+  const a=S.meta.ask||{};
+  let h='<div class="card" style="margin-bottom:12px;border-left:4px solid var(--teal)">'
+    +'<b style="font-size:15px">Ask your data</b>'
+    +'<div class="m" style="margin:2px 0 8px">Everything in this app — clinics, people, conversations, promises, decisions — is read before answering.</div>'
+    +'<div style="display:flex;gap:8px"><input id="askq" placeholder="Ask anything about your business…" value="'+esc(a.q||'')+'" onkeydown="if(event.key===\'Enter\')askBrain(this.value)" style="flex:1;font-family:inherit;font-size:15px;padding:11px;border:1.5px solid var(--line);border-radius:11px;background:#FDFCF9">'
+    +'<button class="btn" onclick="askBrain($(\'askq\').value)">Ask</button></div>'
+    +'<div class="filterrow" style="margin-top:8px">'+ASK_SUGGESTIONS.map(s=>'<button onclick="askBrain(this.textContent)">'+esc(s)+'</button>').join('')+'</div>';
+  if(a.loading)h+='<div class="note">Reading everything…</div>';
+  if(a.error)h+='<div class="hl bad"><i class="dot"></i><div>'+esc(a.error)+'</div></div>';
+  if(a.out){
+    h+='<div style="font-family:Newsreader,serif;font-size:16px;line-height:1.5;margin:10px 0">'+esc(a.out.answer||'')+'</div>';
+    if((a.out.evidence||[]).length)h+='<div class="m">'+a.out.evidence.map(e=>'• '+esc(e)).join('<br>')+'</div>';
+    (a.out.actions||[]).forEach((ac,i)=>{
+      h+='<div class="item" style="box-shadow:none;margin-top:8px"><div class="irow"><div><div class="t" style="font-size:13.5px">'+esc(ac.do)+'</div>'
+        +(ac.why?'<div class="m">'+esc(ac.why)+'</div>':'')+'</div><div class="acts"><button onclick="askToTask('+i+')">→ Now</button></div></div></div>';
+    });
+    if(a.out.caveat)h+='<div class="note" style="margin-top:8px"><b>Caveat:</b> '+esc(a.out.caveat)+'</div>';
+  }
+  return h+'</div>';
+}
+function openAsk(){
+  const a=S.meta.ask||{};
+  const hist=(S.meta.askLog||[]).slice(-4).reverse();
+  $('modal').innerHTML='<h3>Ask your data</h3>'
+    +'<div class="note" style="margin-bottom:8px">Every clinic, person, conversation, promise, task and decision in this app is read before answering.</div>'
+    +'<div class="f"><textarea id="askm" style="min-height:70px" placeholder="Ask anything — “which clinic is closest to paying?”, “what keeps going wrong at Apex?”, “where should I spend tomorrow?”">'+esc(a.q&&!a.out?a.q:'')+'</textarea></div>'
+    +'<div class="filterrow">'+ASK_SUGGESTIONS.map(s=>'<button onclick="$(\'askm\').value=this.textContent;askModal()">'+esc(s)+'</button>').join('')+'</div>'
+    +'<div id="askout">'+(a.out?askAnswerHTML(a):'')+'</div>'
+    +(hist.length?'<div class="note" style="margin-top:10px">Recent: '+hist.map(h2=>'<a href="#" onclick="$(\'askm\').value=this.textContent;askModal();return false" style="margin-right:8px">'+esc(cut(h2,42))+'</a>').join('')+'</div>':'')
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Close</button><button class="btn" onclick="askModal()">Ask</button></div>';
+  $('overlay').classList.add('open');
+  setTimeout(()=>{const t=$('askm');if(t&&window.innerWidth>700)t.focus();},60);
+}
+function askAnswerHTML(a){
+  const o=a.out||{};
+  let h='<div class="card" style="margin-top:10px"><div style="font-family:Newsreader,serif;font-size:16px;line-height:1.5">'+esc(o.answer||'')+'</div>';
+  if((o.evidence||[]).length)h+='<div class="m" style="margin-top:8px">'+o.evidence.map(e=>'• '+esc(e)).join('<br>')+'</div>';
+  (o.actions||[]).forEach((ac,i)=>{h+='<div class="item" style="box-shadow:none;margin-top:8px"><div class="irow"><div><div class="t" style="font-size:13.5px">'+esc(ac.do)+'</div>'+(ac.why?'<div class="m">'+esc(ac.why)+'</div>':'')+'</div><div class="acts"><button onclick="askToTask('+i+')">→ Now</button></div></div></div>';});
+  if(o.caveat)h+='<div class="note" style="margin-top:8px"><b>Caveat:</b> '+esc(o.caveat)+'</div>';
+  return h+'</div>';
+}
+async function askModal(){
+  const q=($('askm')&&$('askm').value||'').trim();
+  if(!q){toast('Type a question');return;}
+  const out=$('askout');if(out)out.innerHTML='<div class="note" style="margin-top:10px">Reading everything…</div>';
+  S.meta.askLog=[...new Set([...(S.meta.askLog||[]),q])].slice(-12);
+  await askBrain(q);
+  const a=S.meta.ask||{};
+  const o2=$('askout');
+  if(o2)o2.innerHTML=a.error?'<div class="hl bad" style="margin-top:10px"><i class="dot"></i><div>'+esc(a.error)+'</div></div>':askAnswerHTML(a);
+}
+function askToTask(i){
+  const ac=((S.meta.ask||{}).out||{}).actions[i];if(!ac)return;
+  S.sequence.push({id:uid(),title:ac.do,bucket:'now',trigger:'',notes:ac.why||'',link:autoLink(ac.do),done:false,created:todayISO(),ts:nowStamp()});
+  save();render();toast('Added to Now ✓');
+}
+
+/* ---------- SIGNALS: what all the conversations add up to ---------- */
+async function runSignals(){
+  const rows=allConvs();
+  if(rows.length<2){toast('Log a few conversations first');return;}
+  if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
+  toast('Reading every conversation…');
+  const data=rows.slice(0,40).map(x=>({with:x.who,date:x.v.date,tags:x.v.tags||[],
+    said:(x.v.summary||'').slice(0,300),points:(x.v.points||[]).slice(0,4),
+    objections:x.v.objections||[],pricing:x.v.pricing||[],nextStep:x.v.nextStep||''}));
+  const prompt=BRAIN_BRIEF+'\n\nBelow is every conversation he has logged with doctors, clinic staff and contacts. Find what they collectively tell him — patterns, not a summary of each. '
+    +'Be specific and quote their words where useful. If the evidence is thin, say so plainly rather than inventing a pattern.\n'
+    +'Return ONLY JSON: {"headline":"one sentence: what the field is really saying",'
+    +'"patterns":[{"finding":"the pattern","evidence":"who said what","soWhat":"what he should do about it"}],'
+    +'"pricing":"what the conversations reveal about willingness to pay, in their words",'
+    +'"build":"the single feature the field is asking for most, and whether the evidence is strong enough to act on",'
+    +'"blocker":"the objection most likely to cost him deals, and the answer he should prepare",'
+    +'"blindspot":"something he seems not to be asking about in these conversations"}\n\nCONVERSATIONS:\n'+JSON.stringify(data);
+  try{
+    const out=await gemini([{text:prompt}],{temp:0.3,prefer:'gemini-2.5-flash'});
+    S.meta.signals={date:todayISO(),n:rows.length,out};save();render();toast('Analysis ready');
+  }catch(e){alert('Could not analyse: '+e.message);}
+}
+function signalsCard(){
+  const s=S.meta.signals;
+  if(!s)return '<div class="card" style="margin-bottom:12px;border-left:4px solid var(--teal)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+    +'<div><b style="font-size:15px">What is the field telling you?</b><div class="m" style="margin-top:2px">Reads every conversation you have logged and finds the patterns — pricing reality, the feature that keeps coming up, the objection costing you deals.</div></div>'
+    +'<button class="btn sm" onclick="runSignals()">Analyse</button></div></div>';
+  const o=s.out||{};
+  let h='<div class="card" style="margin-bottom:12px;border-left:4px solid var(--teal)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    +'<b style="font-size:15px">The field is saying</b><div style="display:flex;gap:6px;align-items:center"><span class="pill grey">'+s.n+' conversations · '+fmtDs(s.date)+'</span><button class="btn sm sec" onclick="runSignals()">Refresh</button></div></div>';
+  if(o.headline)h+='<div style="font-family:Newsreader,serif;font-size:16px;line-height:1.45;margin-bottom:10px">'+esc(o.headline)+'</div>';
+  (o.patterns||[]).forEach(p=>{
+    h+='<div class="item" style="box-shadow:none;margin-bottom:8px"><div class="t" style="font-size:13.5px">'+esc(p.finding)+'</div>'
+      +(p.evidence?'<div class="m"><i>'+esc(p.evidence)+'</i></div>':'')
+      +(p.soWhat?'<div class="m"><b>So:</b> '+esc(p.soWhat)+'</div>':'')+'</div>';
+  });
+  if(o.pricing)h+='<div class="hl info"><i class="dot"></i><div><b>Pricing:</b> '+esc(o.pricing)+'</div></div>';
+  if(o.build)h+='<div class="hl good"><i class="dot"></i><div><b>Build:</b> '+esc(o.build)+'</div></div>';
+  if(o.blocker)h+='<div class="hl warn"><i class="dot"></i><div><b>Biggest blocker:</b> '+esc(o.blocker)+'</div></div>';
+  if(o.blindspot)h+='<div class="hl bad"><i class="dot"></i><div><b>Blind spot:</b> '+esc(o.blindspot)+'</div></div>';
   return h+'</div>';
 }
 
@@ -2500,6 +2728,7 @@ function vReports(){
     h+=repSel('bucket','Bucket',['now','queued','parked'])+repSel('done','Completed',['yes'])+repSel('link','Linked to',linkOptions().filter(o=>o!=='— none —'));
   }
   h+='</div>'+(Object.keys(rep.f).length?'<button class="btn sm sec" style="margin-top:10px" onclick="setRepBase(\''+rep.base+'\')">Clear filters</button>':'')+'</div>';
+  if(rep.base==='convs')h=signalsCard()+h;
   h+='<h2>'+rows.length+' result'+(rows.length!==1?'s':'')+'</h2>';
   if(!rows.length)return h+'<div class="empty">Nothing matches these filters.</div>';
   h+='<div class="card" style="overflow-x:auto;padding:0"><table style="width:100%;border-collapse:collapse;font-size:13px">'
@@ -2586,7 +2815,7 @@ function vClinicDetail(){
     [c.city,c.phone?'☎ reception '+esc(c.phone):'',c.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
-    +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log conversation</button>'
+    +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log visit / call</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="editClinic(\''+c.id+'\')">Edit</button></div>';
@@ -2620,7 +2849,7 @@ function vPersonDetail(){
     [p.city,p.phone?'📱 personal '+esc(p.phone):'',p.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button>'
-    +'<button class="btn sm sec" onclick="openConv(\'person\',\''+p.id+'\')">🎧 Log conversation</button>'
+    +'<button class="btn sm sec" onclick="openConv(\'person\',\''+p.id+'\')">🎧 Log visit / call</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="editPerson(\''+p.id+'\')">Edit</button></div>';
   h+='<h2>Clinics</h2>';
@@ -2646,7 +2875,8 @@ function vPersonDetail(){
 const SPECCOLORS=['#0F766E','#14B8A6','#B45309','#6D28D9','#0369A1','#BE185D','#4D7C0F','#78716C'];
 function vIns(){
   const live=liveCount();
-  let h='<h2>The road to 400</h2><div class="card">'
+  let head=askCard()+signalsCard();
+  let h=head+'<h2>The road to 400</h2><div class="card">'
     +'<div class="gatebar"><div class="fill" style="width:'+Math.min(100,live/15*100)+'%"></div></div>'
     +'<div class="gmarks"><span>0</span><span>3 \u00b7 gate 1</span><span>8 \u00b7 gate 2</span><span>15 \u00b7 partner gate</span></div>'
     +'<div class="note">'+(live<15?'Founder-direct phase: '+live+' live of 15. No partners, no reps until clinic 15.':'Partner gate passed \u2014 '+live+' live. Long-game target: 400 paying in ~24 months.')+'</div></div>';
@@ -3445,7 +3675,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='10.8';
+const APP_VERSION='11.1';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
