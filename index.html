@@ -302,7 +302,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v13.4</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v13.5</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -319,10 +319,11 @@ a{color:var(--teal)}
 <script>
 'use strict';
 /* ================= CORE ================= */
-const APP_VERSION='13.4';
+const APP_VERSION='13.5';
 /* CHANGELOG — single source of truth for the project bible. Claude appends one entry per version.
    Format: {v, date, what[]}  — newest first. Do not reformat; the bible sync reads this block. */
 const CHANGELOG=[
+ {v:'13.5',date:'2026-08-20',what:['Fixed doctors appearing twice — name matching now ignores stray spaces, punctuation and dictation characters, so the duplicate guards actually hold','Duplicate people inside a clinic are merged on every load, keeping the richest copy: segmentation, phone and notes from both are combined','Doctor name lists and software lists deduped too, so a merged copy cannot reappear','The receptionist no longer appears both as a person and as a clinic fact — she is listed once, under People here']},
  {v:'13.4',date:'2026-08-20',what:['Repainted to the DeskLens design system — spec tokens throughout, no pure white or pure black anywhere','Typography now Inter for reading and Poppins for headings, with glance numbers at weight 800','Warm colour is signal again: amber, red and green only carry meaning; categories use the teal family so alerts stand out','Every text and marker colour checked against WCAG — the spec amber failed as text at 2.2:1, so text uses deeper -ink variants']},
  {v:'13.3',date:'2026-08-20',what:['Pipeline renamed to Clinics','New typography — Figtree for reading, Fraunces for headings, larger base size and looser lines','My World removed from the interface; its data is deliberately left in the file and in backups, and Follow-ups moved into the main nav','Six AI surfaces became three: pre-visit prep folded into the clinic profile, coach and signals merged into one button, and the post-visit debrief no longer fires by itself','Main-server integration removed — no server exists yet; the contract stays in the bible']},
  {v:'13.2',date:'2026-08-20',what:['Full audit of the app end to end — found and fixed eight broken connections left behind by the accounts restructure','Search now covers conversations, observations, clinic contacts, software in use and who visits them — not just names','The AI brain now receives what you LEARNED as well as what was said, and knows whether a handset was tested or only heard about','Doctor dropdowns, voice name-matching and the segmentation report all read clinic contacts again — they had been coming back empty','Guided step-by-step entry was orphaned and writing to the old model; repaired and reachable from any add screen']},
@@ -902,7 +903,20 @@ function pullFromClinic(sel){
 $('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeModal();});
 
 /* ================= DOCTOR ↔ CLINIC SYNC ================= */
-function nameEq(a,b){return !!a&&!!b&&a.trim().toLowerCase().replace(/^dr\.?\s*/,'')===b.trim().toLowerCase().replace(/^dr\.?\s*/,'');}
+/* Names arrive by dictation, by AI and by hand, so they carry stray spaces, zero-width
+   characters and inconsistent "Dr." punctuation. Compare on a normalised form or the
+   duplicate guards let a second copy of the same person straight through. */
+function normName(s){
+  return String(s||'')
+    .replace(/[​-‍﻿]/g,'')      // zero-width junk from dictation
+    .normalize('NFKD').replace(/[̀-ͯ]/g,'')
+    .replace(/^\s*(name|naam)\s*[:\-]\s*/i,'')
+    .replace(/^\s*(dr|doctor|mr|mrs|ms|prof)\b\.?\s*/i,'')
+    .replace(/[.,'’`]/g,'')
+    .replace(/\s+/g,' ')
+    .trim().toLowerCase();
+}
+function nameEq(a,b){const x=normName(a),y=normName(b);return !!x&&!!y&&x===y;}
 function linkClinicDoctor(c){
   /* doctors are contacts of the clinic — never People records */
   const created=[];
@@ -3076,6 +3090,49 @@ const NETWORK_ROLES=['Channel partner','Commission partner','Association office-
 const NETWORK_ONLY=r=>/commission|channel|association|official|kpme|ima|dho|team|co-?founder|vendor|friend|personal/i.test(r||'');
 const CLINICAL_ROLE=r=>!NETWORK_ONLY(r);
 const contactRoleFor=r=>/recept|front desk/i.test(r||'')?'Receptionist':/manager/i.test(r||'')?'Clinic manager':/owner/i.test(r||'')?'Owner (non-doctor)':/staff/i.test(r||'')?'Other staff':'Doctor';
+/* Merge duplicate people inside a clinic. Runs on every load, so it self-heals rather than
+   waiting for a migration flag. Keeps the richest copy — a field filled anywhere survives. */
+function dedupeContacts(){
+  let merged=0;
+  S.clinics.forEach(c=>{
+    if(!Array.isArray(c.contacts))return;
+    const byName={},out=[];
+    c.contacts.forEach(ct=>{
+      const k=normName(ct.name);
+      if(!k){out.push(ct);return;}
+      const first=byName[k];
+      if(first===undefined){byName[k]=out.length;out.push(ct);return;}
+      const keep=out[first];
+      /* prefer the longer, more human spelling of the name */
+      if(String(ct.name||'').length>String(keep.name||'').length)keep.name=ct.name;
+      Object.keys(ct).forEach(f=>{
+        if(f==='id'||f==='name')return;
+        if(f==='referrer'){if(ct.referrer)keep.referrer=true;return;}
+        if(f==='notes'){
+          if(ct.notes&&!String(keep.notes||'').includes(ct.notes))keep.notes=[keep.notes,ct.notes].filter(Boolean).join(' · ');
+          return;
+        }
+        if(keep[f]===undefined||keep[f]===''||keep[f]===null)keep[f]=ct[f];
+      });
+      merged++;
+    });
+    if(merged)c.contacts=out;
+    /* the doctors[] name list feeds linkClinicDoctor — dedupe it too or the copy comes back */
+    if(Array.isArray(c.doctors)){
+      const seen={},d=[];
+      c.doctors.forEach(n=>{const k=normName(n);if(!k||seen[k])return;seen[k]=1;d.push(n);});
+      if(d.length!==c.doctors.length)c.doctors=d;
+    }
+    ['systems','orbit'].forEach(list=>{
+      if(!Array.isArray(c[list]))return;
+      const seen={},keep=[];
+      c[list].forEach(x=>{const k=normName(x.name);if(!k){keep.push(x);return;}if(seen[k])return;seen[k]=1;keep.push(x);});
+      if(keep.length!==c[list].length)c[list]=keep;
+    });
+  });
+  if(merged)localStorage.setItem(LS_KEY,JSON.stringify(S));
+  return merged;
+}
 function contacts(c){return c.contacts||[];}
 /* One place that answers "who does this app know about?" — clinic contacts AND network people.
    Everything that used to read S.people for doctors now comes through here. */
@@ -3152,7 +3209,13 @@ function referrerNames(){
 function referralsBy(name){return S.clinics.filter(c=>nameEq(c.broughtBy,name));}
 function referrerCards(){
   const rows=[];
-  S.clinics.forEach(c=>contacts(c).forEach(ct=>{if(ct.referrer)rows.push({name:ct.name,where:c.name,clinicId:c.id,contact:ct});}));
+  const seen={};
+  S.clinics.forEach(c=>contacts(c).forEach(ct=>{
+    if(!ct.referrer)return;
+    const k=c.id+'|'+normName(ct.name);
+    if(seen[k])return; seen[k]=1;
+    rows.push({name:ct.name,where:c.name,clinicId:c.id,contact:ct});
+  }));
   if(!rows.length)return '';
   return '<h2>Referrers inside clinics <span class="cnt">'+rows.length+'</span></h2>'
     +'<div class="subtle" style="margin-bottom:8px">They stay on their clinic record — shown here because they open doors.</div>'
@@ -4057,7 +4120,11 @@ function profileHTML(c){
 }
 /* Living profile: every fact with how you know it and when */
 function knowHTML(c){
-  const keys=Object.keys(FACT_LABELS).filter(k=>String(c[k]||'').trim()&&!/^(unverified|unknown)$/i.test(String(c[k])));
+  /* the receptionist and her mobile are already shown as a person in "People here" —
+     repeating them here reads as a duplicate */
+  const SHOWN_ELSEWHERE=['whoAnswers','whoAnswersPhone'];
+  const keys=Object.keys(FACT_LABELS).filter(k=>SHOWN_ELSEWHERE.indexOf(k)<0
+    &&String(c[k]||'').trim()&&!/^(unverified|unknown)$/i.test(String(c[k])));
   const soft=softFacts(c);
   let h='<h2>What I know <span class="cnt">'+keys.length+'</span>'
    +'<button class="btn sm sec" style="margin-left:auto" onclick="openConv(\'clinic\',\''+c.id+'\')">+ Add</button></h2>';
@@ -4953,6 +5020,8 @@ if(S.meta.repairedAt!=='11.3'){try{repairData(true);S.meta.repairedAt='11.3';}ca
 try{
   const b4=countRecs(S)._total;
   const mv=migrateToAccounts();const tp=tidyPeople();const n=mv+tp;
+  const dc=dedupeContacts();
+  if(dc)setTimeout(()=>toast('Merged '+dc+' duplicate '+(dc>1?'people':'person')+' inside clinics'),1500);
   const dd=dedupeTrail();
   if(dd)setTimeout(()=>toast('Tidied '+dd+' duplicate trail entries'),1800);
   const af=countRecs(S)._total;
