@@ -293,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.7</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.8</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -310,10 +310,11 @@ a{color:var(--teal)}
 <script>
 'use strict';
 /* ================= CORE ================= */
-const APP_VERSION='12.7';
+const APP_VERSION='12.8';
 /* CHANGELOG — single source of truth for the project bible. Claude appends one entry per version.
    Format: {v, date, what[]}  — newest first. Do not reformat; the bible sync reads this block. */
 const CHANGELOG=[
+ {v:'12.8',date:'2026-08-20',what:['Sync now MERGES instead of overwriting — a device can no longer wipe records it has never seen (this was the cause of the lost clinic)','Restore points: a full copy of this device kept on opening, every hour, on closing, and before any migration — 15 kept, never touched by sync','Nothing is deleted any more — deleted items move to Data → Recover and can be put back','Data → Recover shows record counts so a drop is visible immediately','Fixed a timezone bug: anything entered before 5:30am was being dated to the previous day','One conversation is now ONE entry on the trail — the visit, tasks and promises it created are listed inside it instead of repeating the same text four times']},
  {v:'12.7',date:'2026-08-20',what:['Clinic staff no longer leak into People — doctors and receptionists live inside their clinic as contacts','tidyPeople() runs on every load and after every conversation: folds stray clinic people back in, moves their conversations with them, strips "Name:" prefixes from voice-created records','Voice-created doctors attached to a clinic become clinic contacts, not network People']},
  {v:'12.6',date:'2026-08-20',what:['Fixed Insights crash when a numeric value (review count, goal progress) reached the escaper']},
  {v:'12.5',date:'2026-08-20',what:['Pilot countdown to 1 September 2026 on Today, with a 9-item pilot readiness checklist']},
@@ -331,7 +332,8 @@ const CHANGELOG=[
  {v:'8.1',date:'2026-08-17',what:['Main-server integration layer, built and switched off by default']}
 ];
 const LS_KEY='dlhq_v1';
-const todayISO=()=>new Date().toISOString().slice(0,10);
+const isoOf=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const todayISO=()=>isoOf(new Date());   /* LOCAL date. toISOString() is UTC and lands a day early in IST before 5:30am. */
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const $=id=>document.getElementById(id);
 const esc=s=>(s===null||s===undefined?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -352,7 +354,7 @@ function normDate(v){
   m=s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);              // 18/08/2026
   if(m)return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
   const d=new Date(s);
-  return isNaN(d)?'':d.toISOString().slice(0,10);
+  return isNaN(d)?'':isoOf(d);
 }
 function daysAgo(iso){return Math.floor((new Date()-new Date(normDate(iso)+'T00:00'))/(864e5));}
 function daysTo(iso){return Math.ceil((new Date(iso+'T00:00')-new Date())/(864e5));}
@@ -453,6 +455,7 @@ function migrate(d){
   if(d.meta.pilotMode===undefined)d.meta.pilotMode=true;
   if(d.meta.pilotNudged===undefined)d.meta.pilotNudged=false;
   if(d.meta.rev===undefined)d.meta.rev=0;
+  if(!Array.isArray(d.trash))d.trash=[];
   if(!d.meta.hook)d.meta.hook={url:'',secret:'',on:false,lastAt:'',lastErr:''};
   if(!d.meta.custom)d.meta.custom={};
   if(!d.meta.dens)d.meta.dens='auto';
@@ -502,6 +505,161 @@ function save(opts){
   if(!opts||!opts.fromCloud){S.meta.rev=Date.now();}
   localStorage.setItem(LS_KEY,JSON.stringify(S));
   if(!opts||!opts.fromCloud){cloudPush();hookPush();}
+}
+/* ================= DATA SAFETY CORE (v12.8) =================
+   Three independent guarantees:
+   1. Restore points  — full local copies kept on THIS device, never touched by sync.
+   2. Trash           — nothing deleted is really deleted; it is moved aside and can be put back.
+   3. Merge sync      — a device can no longer overwrite records it has never seen.
+   ============================================================ */
+const RP_KEY='dlhq_rp';
+const BUCKETS=['sequence','clinics','people','decisions','questions','inbox','followups','journey'];
+const ME_BUCKETS=['sequence','inbox','followups','goals','journal','routines'];
+const SUBLISTS=['contacts','calls','visits','systems','orbit','stageHistory'];
+
+function countRecs(st){
+  const n={};let total=0;
+  BUCKETS.forEach(k=>{const c=(st[k]||[]).length;n[k]=c;total+=c;});
+  let sub=0;
+  (st.clinics||[]).forEach(c=>SUBLISTS.forEach(k=>sub+=((c[k]||[]).length)));
+  (st.people||[]).forEach(pp=>sub+=((pp.calls||[]).length));
+  ME_BUCKETS.forEach(k=>{const c=((st.me&&st.me[k])||[]).length;n['me.'+k]=c;total+=c;});
+  n._sub=sub;n._total=total+sub;
+  return n;
+}
+function rpAll(){try{return JSON.parse(localStorage.getItem(RP_KEY)||'[]');}catch(e){return [];}}
+/* Take a restore point. Silent, cheap, device-local. Never leaves this browser. */
+function pushRP(label){
+  try{
+    const list=rpAll();
+    const snap={t:Date.now(),label:label||'auto',ver:APP_VERSION,n:countRecs(S),payload:JSON.stringify(S)};
+    if(list.length&&list[0].payload===snap.payload){list[0].t=snap.t;list[0].label=snap.label;}
+    else list.unshift(snap);
+    while(list.length>15)list.pop();
+    for(;;){
+      try{localStorage.setItem(RP_KEY,JSON.stringify(list));break;}
+      catch(e){if(list.length<=2)break;list.pop();}   // quota: drop the oldest and try again
+    }
+  }catch(e){}
+}
+function restoreRP(t){
+  const r=rpAll().find(x=>x.t===Number(t));
+  if(!r)return toast('That restore point is gone');
+  if(!confirm('Restore this device to '+new Date(r.t).toLocaleString()+'?\n\nA restore point of the CURRENT state is saved first, so this can be undone.'))return;
+  pushRP('before restore');
+  try{
+    const before=countRecs(S);
+    S=migrate(JSON.parse(r.payload));
+    S.meta.rev=Date.now();                 // this state now wins everywhere
+    localStorage.setItem(LS_KEY,JSON.stringify(S));
+    cloudPush(true);render();
+    const after=countRecs(S);
+    toast('Restored — '+before._total+' records → '+after._total);
+  }catch(e){alert('Restore failed: '+e.message);}
+}
+/* ---- Trash: every delete lands here instead of vanishing ---- */
+function bin(kind,rec,parent){
+  if(!rec)return;
+  S.trash=S.trash||[];
+  S.trash.unshift({tid:uid(),kind:kind,at:Date.now(),
+    label:String(rec.name||rec.title||rec.text||rec.q||rec.summary||rec.note||rec.date||'record').slice(0,80),
+    parent:parent||null,rec:JSON.parse(JSON.stringify(rec))});
+  if(S.trash.length>300)S.trash.length=300;
+}
+function unbin(tid){
+  const i=(S.trash||[]).findIndex(x=>x.tid===tid);
+  if(i<0)return;
+  const e=S.trash[i];
+  const put=(arr)=>{arr=arr||[];if(!arr.some(x=>x.id===e.rec.id))arr.push(e.rec);return arr;};
+  try{
+    if(e.parent&&e.parent.type==='clinic'){
+      const c=S.clinics.find(x=>x.id===e.parent.id);
+      if(!c){toast('That clinic no longer exists — restore the clinic first');return;}
+      c[e.parent.list]=put(c[e.parent.list]);
+    }
+    else if(e.parent&&e.parent.type==='me')S.me[e.parent.list]=put(S.me[e.parent.list]);
+    else S[e.kind]=put(S[e.kind]);
+    S.trash.splice(i,1);save();render();toast('Put back ✓');
+  }catch(err){toast('Could not put back: '+err.message);}
+}
+/* ---- Merge: union by id. A record that exists on either side survives. ---- */
+function mergeList(a,b,tombs){
+  const out=[],seen={};
+  const take=r=>{
+    if(!r)return;
+    const k=r.id||JSON.stringify(r);
+    if(seen[k]!==undefined){
+      const cur=out[seen[k]];
+      const rt=Number(r.ts||r.mt||0),ct=Number(cur.ts||cur.mt||0);
+      const richer=JSON.stringify(r).length>JSON.stringify(cur).length;
+      if(rt>ct||(rt===ct&&richer))out[seen[k]]=Object.assign({},cur,r);
+      return;
+    }
+    if(r.id&&tombs&&tombs[r.id])return;          // deleted on purpose, stays deleted
+    seen[k]=out.length;out.push(r);
+  };
+  (a||[]).forEach(take);(b||[]).forEach(take);
+  return out;
+}
+function mergeStates(mine,theirs){
+  const out=JSON.parse(JSON.stringify(mine));
+  const tombs={};
+  [].concat(mine.trash||[],theirs.trash||[]).forEach(e=>{if(e&&e.rec&&e.rec.id)tombs[e.rec.id]=e.at||1;});
+  BUCKETS.forEach(k=>{out[k]=mergeList(mine[k],theirs[k],tombs);});
+  out.me=out.me||{};
+  ME_BUCKETS.forEach(k=>{out.me[k]=mergeList((mine.me||{})[k],(theirs.me||{})[k],tombs);});
+  // clinics carry their own sub-lists — merge those too, or a visit logged on the phone dies on the Mac
+  out.clinics.forEach(c=>{
+    const mc=(mine.clinics||[]).find(x=>x.id===c.id)||{};
+    const tc=(theirs.clinics||[]).find(x=>x.id===c.id)||{};
+    SUBLISTS.forEach(k=>{const m=mergeList(mc[k],tc[k],tombs);if(m.length)c[k]=m;});
+    // a field filled in on either device is kept; blank never overwrites filled
+    Object.keys(tc).forEach(f=>{
+      if(SUBLISTS.indexOf(f)>=0||f==='id')return;
+      if((c[f]===undefined||c[f]===''||c[f]===null)&&tc[f]!==undefined&&tc[f]!=='')c[f]=tc[f];
+    });
+  });
+  out.trash=mergeList(mine.trash,theirs.trash,null).sort((x,y)=>(y.at||0)-(x.at||0)).slice(0,300);
+  out.meta=Object.assign({},theirs.meta||{},mine.meta||{});
+  out.meta.rev=Date.now();
+  return out;
+}
+/* ---- Recover screen: restore points on this device + everything ever deleted ---- */
+function agoLabel(ms){
+  const s=Math.round((Date.now()-ms)/1000);
+  if(s<90)return 'just now';
+  if(s<3600)return Math.round(s/60)+' min ago';
+  if(s<86400)return Math.round(s/3600)+' hr ago';
+  return Math.round(s/86400)+' days ago';
+}
+function recoverHTML(){
+  const cur=countRecs(S);
+  let h='<h2>Recover</h2>';
+  h+='<div class="card"><p style="font-size:13.5px;line-height:1.6">This device holds <b>'+cur._total+' records</b> right now ('+cur.clinics+' clinics, '+cur.people+' network people, '+cur._sub+' contacts &amp; conversations).<br>Restore points below live <b>only on this device</b> — sync can never touch them. If a number looks wrong, restore the point where it looked right.</p></div>';
+  const list=rpAll();
+  h+='<h3 style="margin:16px 0 8px;font-size:14px">Restore points on this device</h3>';
+  if(!list.length)h+='<div class="card"><p class="muted" style="font-size:13px">None yet — one is taken every time you open the app, every hour, and before anything risky.</p></div>';
+  list.forEach(r=>{
+    const d=new Date(r.t);
+    const diff=r.n._total-cur._total;
+    const badge=diff>0?'<span style="color:var(--warn,#b26a00);font-weight:600"> · '+diff+' more than now</span>':(diff<0?'<span class="muted"> · '+(-diff)+' fewer</span>':'<span class="muted"> · same</span>');
+    h+='<div class="card" style="padding:12px"><div class="irow"><div>'
+      +'<b style="font-size:14px">'+esc(d.toLocaleDateString([], {day:'numeric',month:'short'}))+' '+esc(d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}))+'</b> <span class="muted" style="font-size:12px">'+esc(agoLabel(r.t))+'</span>'
+      +'<div class="muted" style="font-size:12px;margin-top:3px">'+esc(r.label)+' · v'+esc(r.ver||'?')+'</div>'
+      +'<div style="font-size:12.5px;margin-top:4px">'+r.n._total+' records ('+r.n.clinics+' clinics, '+r.n.people+' people)'+badge+'</div>'
+      +'</div><div class="acts"><button class="btn sm sec" data-rp="'+r.t+'">Restore this</button></div></div></div>';
+  });
+  const tr=(S.trash||[]);
+  h+='<h3 style="margin:18px 0 8px;font-size:14px">Deleted items ('+tr.length+')</h3>';
+  if(!tr.length)h+='<div class="card"><p class="muted" style="font-size:13px">Nothing deleted. From v12.8 onward, anything you delete lands here instead of disappearing.</p></div>';
+  tr.slice(0,60).forEach(e=>{
+    h+='<div class="card" style="padding:10px 12px"><div class="irow"><div>'
+      +'<b style="font-size:13.5px">'+esc(e.label)+'</b>'
+      +'<div class="muted" style="font-size:12px">'+esc(e.kind)+' · deleted '+esc(agoLabel(e.at))+'</div>'
+      +'</div><div class="acts"><button class="btn sm sec" data-unbin="'+esc(e.tid)+'">Put back</button></div></div></div>';
+  });
+  h+='<div class="card" style="margin-top:14px"><p style="font-size:13px;line-height:1.6"><b>Belt and braces.</b> Restore points are on this device. Snapshots are in the cloud (one a day, 14 days). Backup files are yours forever. Take a backup before anything big:</p><button class="btn sm" onclick="pushRP(\'manual\');toast(\'Restore point saved ✓\')">Save a restore point now</button></div>';
+  return h;
 }
 /* ---- Outbound integration: push to the DeskLens main server when switched on ---- */
 let hookT=null;
@@ -595,9 +753,23 @@ function startListen(){
     let remote;try{remote=JSON.parse(data.payload);}catch(e){return;}
     const rrev=(remote.meta&&remote.meta.rev)||0,lrev=(S.meta&&S.meta.rev)||0;
     if(rrev>lrev){
-      fb.applying=true;S=migrate(remote);
-      localStorage.setItem(LS_KEY,JSON.stringify(S));
-      fb.applying=false;render();toast('Updated from your other device');
+      const mine=countRecs(S),theirs=countRecs(remote);
+      pushRP('before update from another device');
+      fb.applying=true;
+      if(theirs._total < mine._total){
+        /* The other device is sending a SMALLER copy. This is how data used to vanish.
+           Never replace — merge, so every record on both sides survives. */
+        S=migrate(mergeStates(S,remote));
+        localStorage.setItem(LS_KEY,JSON.stringify(S));
+        fb.applying=false;render();cloudPush(true);
+        toast('Merged with your other device — kept all '+countRecs(S)._total+' records');
+      }else{
+        S=migrate(mergeStates(S,remote));
+        localStorage.setItem(LS_KEY,JSON.stringify(S));
+        fb.applying=false;render();
+        if(countRecs(S)._total>theirs._total)cloudPush(true);
+        toast('Updated from your other device');
+      }
     }else if(lrev>rrev)cloudPush(true);
   },err=>{setSyncStatus(err&&err.code==='unavailable'?'offline':'error');});
 }
@@ -1458,7 +1630,7 @@ function classifyPart(p){
     const cl=autoLink(p);
     if(cl&&S.clinics.some(c=>c.name===cl)){
       item.type='visit';item.link=cl;
-      if(/\byesterday\b/.test(lo)){const d=new Date();d.setDate(d.getDate()-1);item.due=d.toISOString().slice(0,10);}
+      if(/\byesterday\b/.test(lo)){const d=new Date();d.setDate(d.getDate()-1);item.due=isoOf(d);}
       else item.due=todayISO();
       const tm=lo.match(/\bat\s+(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m|p\.?m)?/);
       if(tm){let hh=parseInt(tm[1]);const min=tm[2]||'00';const ap=tm[3]||'';if(/p/.test(ap)&&hh<12)hh+=12;if(/a/.test(ap)&&hh===12)hh=0;item.time=String(hh).padStart(2,'0')+':'+min;}
@@ -1478,7 +1650,7 @@ function classifyPart(p){
     const m=p.match(/\b(?:[Cc]all|[Aa]sk|[Pp]ing|[Cc]heck with|[Mm]essage|[Ww]hatsapp|[Mm]eet|[Rr]emind)\s+(?:me\s+to\s+\w+\s+)?((?:Dr\.?\s+)?[A-Z][\w.]*(?:\s+[A-Z][\w.]*)?)/);
     if(m)item.who=m[1];
     const d=new Date();d.setDate(d.getDate()+(dueDays===null?1:dueDays));
-    item.due=d.toISOString().slice(0,10);
+    item.due=isoOf(d);
     item.time=parseTimeStr(lo);
     item.text=cleanEntry(p,true)||p;
   }else if(taskMatch){item.type='task';item.text=cleanEntry(p,false)||p;}
@@ -1620,6 +1792,10 @@ function nameLink(n,cls){
 }
 /* Robust click delegation — works even if inline handlers are blocked */
 document.addEventListener('click',function(e){
+  const rp=e.target.closest('[data-rp]');
+  if(rp){e.preventDefault();restoreRP(rp.getAttribute('data-rp'));return;}
+  const ub=e.target.closest('[data-unbin]');
+  if(ub){e.preventDefault();unbin(ub.getAttribute('data-unbin'));return;}
   const oc=e.target.closest('[data-oc]');
   if(oc){e.preventDefault();openClinic(oc.getAttribute('data-oc'));return;}
   const op=e.target.closest('[data-op]');
@@ -1967,6 +2143,42 @@ async function gemini(parts,opts){
   throw new Error('No working model on your key ('+notes.slice(0,3).join(', ')+'). Check the key in Data → AI power.');
 }
 
+/* One-time tidy: old records were written before conversations carried an id, so the same
+   conversation shows as a visit + two tasks + the conversation. Link them back together. */
+function dedupeTrail(){
+  if(S.meta.dedupe==='v1')return 0;
+  let fixed=0;
+  const norm=s=>String(s||'').replace(/\s+/g,' ').trim().toLowerCase();
+  S.clinics.forEach(c=>{
+    const calls=c.calls||[];
+    (c.visits||[]).forEach(v=>{
+      if(v.fromCall)return;
+      const d=normDate(v.date);
+      const m=calls.find(k=>normDate(k.date)===d&&k.summary&&
+        (norm(k.summary)===norm(v.note)||norm(v.note).startsWith(norm(k.summary).slice(0,60))));
+      if(m){v.fromCall=m.id;v.note='';fixed++;}
+    });
+    const link=c.name;
+    const byDate=d=>calls.find(k=>normDate(k.date)===d);
+    S.sequence.forEach(s=>{
+      if(s.fromCall||!s.notes||!nameEq(s.link,link))return;
+      const mm=/From conversation on (.+)$/.exec(s.notes);
+      if(!mm)return;
+      const stamp=norm(mm[1]);
+      const k=calls.find(x=>norm(fmtD(x.date))===stamp)||byDate(normDate(mm[1]));
+      if(k){s.fromCall=k.id;fixed++;}
+      else{const any=calls.find(x=>norm(x.nextStep)===norm(s.title));if(any){s.fromCall=any.id;fixed++;}}
+    });
+    [...S.followups,...(S.me&&S.me.followups||[])].forEach(f=>{
+      if(f.fromCall||!f.created)return;
+      const d=normDate(f.created);const k=byDate(d);
+      if(k&&[c.name,...(c.doctors||[]),c.whoAnswers].filter(Boolean).some(n=>nameEq(n,f.who))){f.fromCall=k.id;fixed++;}
+    });
+  });
+  S.meta.dedupe='v1';
+  localStorage.setItem(LS_KEY,JSON.stringify(S));
+  return fixed;
+}
 /* ---------- RELATIONSHIP TRAIL: every touch, in order ---------- */
 function relatedFor(kind,obj){
   /* accounts model: a clinic owns its contacts, so nothing to merge */
@@ -1980,22 +2192,34 @@ function trailFor(kind,obj){
   const names=[...rel.clinics.map(c=>c.name),...rel.people.map(p=>p.name),...[].concat(...rel.clinics.map(c=>c.doctors||[])),...rel.clinics.map(c=>c.whoAnswers)].filter(Boolean);
   const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
   // visits always belong to a clinic, shown on both the clinic and its people
-  rel.clinics.forEach(c=>(c.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',ts:v.ts,type:'visit',
-    title:'Visit'+(kind==='person'?' — '+c.name:''),body:v.note||''})));
+  /* A visit that came out of a conversation is not a separate event — the conversation IS the visit.
+     Only stand-alone visits get their own row. */
+  const visitByCall={};
+  rel.clinics.forEach(c=>(c.visits||[]).forEach(v=>{
+    if(v.fromCall){visitByCall[v.fromCall]={time:v.time||''};return;}
+    T.push({date:v.date,time:v.time||'',ts:v.ts,type:'visit',title:'Visit'+(kind==='person'?' — '+c.name:''),body:v.note||''});
+  }));
+  /* Anything a conversation created is listed inside that conversation, not beside it. */
+  const spawn={};
+  const addSpawn=(k,label)=>{if(!k)return;(spawn[k]=spawn[k]||[]).push(label);};
+  S.sequence.forEach(x=>{if(x.fromCall)addSpawn(x.fromCall,(x.done?'✓ ':'')+x.title);});
+  [...S.followups,...S.me.followups].forEach(f=>{if(f.fromCall)addSpawn(f.fromCall,(f.done?'✓ ':'')+'promise: '+f.text+(f.due?' (due '+fmtDs(f.due)+')':''));});
   // conversations, wherever they were logged
   const addCalls=(owner,ownerKind)=>(owner.calls||[]).forEach(c=>T.push({date:c.date,ts:c.ts,type:'call',
     title:'Conversation'+(c.src==='recording'?' (recording)':'')+(owner.id!==obj.id?' — with '+owner.name:''),
     body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',
-    sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:owner.id,ownerKind}));
+    sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:owner.id,ownerKind,
+    wasVisit:!!visitByCall[c.id],time:(visitByCall[c.id]||{}).time||'',spawned:spawn[c.id]||[]}));
   rel.clinics.forEach(c=>addCalls(c,'clinic'));
   rel.people.forEach(p=>addCalls(p,'person'));
   rel.clinics.forEach(c=>(c.stageHistory||[]).forEach(s=>T.push({date:s.date,ts:s.ts,type:'stage',
     title:'Stage → '+s.stage+(kind==='person'?' ('+c.name+')':''),body:''})));
   [...S.followups,...S.me.followups].forEach(f=>{
+    if(f.fromCall)return;               // already shown inside its conversation
     if(!isMine(f.who))return;
     T.push({date:f.created||f.due||'',ts:f.ts,type:'promise',title:(f.done?'Promise kept: ':'Promise: ')+f.text,body:f.due?('due '+fmtDs(f.due)):''});
   });
-  S.sequence.filter(t=>isMine(t.link)).forEach(t=>T.push({date:t.created||'',ts:t.ts,type:'task',title:(t.done?'Done: ':'Task: ')+t.title,body:t.notes||''}));
+  S.sequence.filter(t=>!t.fromCall&&isMine(t.link)).forEach(t=>T.push({date:t.created||'',ts:t.ts,type:'task',title:(t.done?'Done: ':'Task: ')+t.title,body:t.notes||''}));
   return T.map((x,i)=>Object.assign(x,{date:normDate(x.date),_i:i}))
     .filter(x=>x.date)
     .sort((a,b)=>b.date.localeCompare(a.date)||(b.time||hhmm(b.ts)||'').localeCompare(a.time||hhmm(a.ts)||'')||b._i-a._i);
@@ -2008,14 +2232,16 @@ function trailHTML(kind,obj){
   T.forEach(e=>{
     const m=new Date(e.date+'T00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'});
     if(m!==lastM){h+='<div class="tlmonth">'+m+'</div>';lastM=m;}
-    h+='<div class="tle"><div class="tdot" style="background:'+(col[e.type]||'#78716C')+'"></div>'
-      +'<div class="tt">'+esc(e.title)+'</div>'
+    const dotCol=(e.type==='call'&&e.wasVisit)?col.visit:(col[e.type]||'#78716C');
+    h+='<div class="tle"><div class="tdot" style="background:'+dotCol+'"></div>'
+      +'<div class="tt">'+esc(e.title)+((e.type==='call'&&e.wasVisit)?' <span class="pill" style="background:#FCE7F3;color:#9D174D;font-size:10.5px;vertical-align:middle">visited</span>':'')+'</div>'
       +'<div class="tm">'+whenLabel(e.date,e.time,e.ts)+'</div>'
       +(e.body?'<div class="m">'+esc(e.body)+'</div>':'')
       +((e.points&&e.points.length)?'<div class="m">'+e.points.map(p=>'• '+esc(p)).join('<br>')+'</div>':'')
       +((e.objections&&e.objections.length)?'<div class="m"><span class="pill amber">objection</span> '+e.objections.map(esc).join(' · ')+'</div>':'')
       +((e.pricing&&e.pricing.length)?'<div class="m"><span class="pill">pricing</span> '+e.pricing.map(esc).join(' · ')+'</div>':'')
       +(e.next?'<div class="m"><b>Next:</b> '+esc(e.next)+'</div>':'')
+      +((e.spawned&&e.spawned.length)?'<div class="m subtle" style="font-size:12px;margin-top:4px">↳ '+e.spawned.map(esc).join(' · ')+'</div>':'')
       +(e.callId?'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+tagPills(e.tags)
         +'<button class="btn sm sec" style="padding:2px 8px;font-size:11px;margin-top:5px" onclick="editTags(\''+e.ownerKind+'\',\''+e.ownerId+'\',\''+e.callId+'\')">tags</button></div>':tagPills(e.tags))
       +'</div>';
@@ -2091,7 +2317,8 @@ function saveTags(kind,ownerId,callId){
 function repairData(silent){
   const log=[];
   // 1. tags on old conversations
-  const n=backfillTags();if(n)log.push(n+' conversations tagged');
+  const n=pushRP('on opening the app');   /* first thing, before any migration can touch a record */
+backfillTags();if(n)log.push(n+' conversations tagged');
   // 2. timestamps where missing (use the record's date so ordering stays sane)
   let ts=0;
   const stamp=(o,d)=>{if(o&&!o.ts){o.ts=(normDate(d)||todayISO())+'T09:00:00.000Z';ts++;}};
@@ -2355,31 +2582,32 @@ function convSave(){
   const o=conv.out||{},obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
   if(!obj)return;
   obj.calls=obj.calls||[];
-  obj.calls.push({id:uid(),date:conv.date,ts:nowStamp(),src:conv.src,summary:o.summary||'',points:o.points||[],
+  const callId=uid();
+  obj.calls.push({id:callId,date:conv.date,ts:nowStamp(),src:conv.src,summary:o.summary||'',points:o.points||[],
     objections:o.objections||[],pricing:o.pricing||[],nextStep:o.nextStep||'',sentiment:o.sentimentNote||'',
     tags:convTagsFrom(o)});
   let n=0,vlog=0,tlog=0;
   // visit
   if($('cvvisit')&&$('cvvisit').checked&&conv.kind==='clinic'){
     obj.visits=obj.visits||[];
-    obj.visits.push({date:conv.date,time:($('cvvtime')&&$('cvvtime').value)||'',note:o.summary||'',ts:nowStamp()});
+    obj.visits.push({date:conv.date,time:($('cvvtime')&&$('cvvtime').value)||'',note:'',ts:nowStamp(),fromCall:callId});
     jlog('visit','Visited '+obj.name+(o.summary?' — '+o.summary.slice(0,70):''),conv.date);
     vlog=1;
   }
   // tasks
   (o.tasks||[]).forEach((t,i)=>{
     const cb=$('cvt'+i);if(cb&&!cb.checked)return;
-    S.sequence.push({id:uid(),title:cleanEntry(t,false)||t,bucket:'queued',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:obj.name,done:false,created:todayISO(),ts:nowStamp()});
+    S.sequence.push({id:uid(),title:cleanEntry(t,false)||t,bucket:'queued',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:obj.name,done:false,created:todayISO(),ts:nowStamp(),fromCall:callId});
     tlog++;
   });
   (o.commitments||[]).forEach((c,i)=>{
     const cb=$('cvc'+i);if(cb&&!cb.checked)return;
     const mine=/vinay|me|i\b/i.test(c.who||'');
     box().followups.push({id:uid(),text:c.what,who:mine?(conv.kind==='clinic'?(obj.doctors&&obj.doctors[0])||obj.name:obj.name):(c.who||obj.name),
-      due:c.due||'',time:'',repeat:'none',done:false,created:todayISO()});n++;
+      due:c.due||'',time:'',repeat:'none',done:false,created:todayISO(),fromCall:callId});n++;
   });
   if($('cvnext')&&$('cvnext').checked&&o.nextStep){
-    S.sequence.push({id:uid(),title:o.nextStep,bucket:'now',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:conv.kind==='clinic'?obj.name:obj.name,done:false,created:todayISO()});
+    S.sequence.push({id:uid(),title:o.nextStep,bucket:'now',trigger:'',notes:'From conversation on '+fmtD(conv.date),link:obj.name,done:false,created:todayISO(),ts:nowStamp(),fromCall:callId});
   }
   if($('cvstage')&&$('cvstage').checked&&o.suggestedStage&&conv.kind==='clinic'){
     obj.stageHistory.push({date:todayISO(),ts:nowStamp(),stage:o.suggestedStage});
@@ -2781,7 +3009,7 @@ function editContact(clinicId,contactId){
     if(/doctor/i.test(v.role)&&!(c.doctors||[]).some(d=>nameEq(d,v.name)))c.doctors=[...(c.doctors||[]),v.name];
     if(/recept/i.test(v.role)&&!c.whoAnswers){c.whoAnswers=v.name;c.whoAnswersPhone=v.phone||'';}
     save();render();toast('Saved ✓');
-  },contactId?()=>{c.contacts=c.contacts.filter(x=>x.id!==contactId);save();render();}:null);
+  },contactId?()=>{bin('contacts',c.contacts.find(x=>x.id===contactId),{type:'clinic',id:c.id,list:'contacts'});c.contacts=c.contacts.filter(x=>x.id!==contactId);save();render();toast('Moved to Recover');}:null);
 }
 
 /* ---------- PILOT COUNTDOWN: days left, and what still blocks it ---------- */
@@ -2868,7 +3096,7 @@ function editSystem(clinicId,sysId){
     if(!v.name)return;
     if(sysId)Object.assign(s,v);else c.systems.push(Object.assign({id:uid()},v));
     save();render();toast('Saved ✓');
-  },sysId?()=>{c.systems=c.systems.filter(x=>x.id!==sysId);save();render();}:null);
+  },sysId?()=>{bin('systems',c.systems.find(x=>x.id===sysId),{type:'clinic',id:c.id,list:'systems'});c.systems=c.systems.filter(x=>x.id!==sysId);save();render();toast('Moved to Recover');}:null);
 }
 function editOrbit(clinicId,oid){
   const c=S.clinics.find(x=>x.id===clinicId);if(!c)return;
@@ -2885,7 +3113,7 @@ function editOrbit(clinicId,oid){
     if(!v.name)return;
     if(oid)Object.assign(o,v);else c.orbit.push(Object.assign({id:uid()},v));
     save();render();toast('Saved ✓');
-  },oid?()=>{c.orbit=c.orbit.filter(x=>x.id!==oid);save();render();}:null);
+  },oid?()=>{bin('orbit',c.orbit.find(x=>x.id===oid),{type:'clinic',id:c.id,list:'orbit'});c.orbit=c.orbit.filter(x=>x.id!==oid);save();render();toast('Moved to Recover');}:null);
 }
 function systemsHTML(c){
   const list=systems(c);
@@ -2995,7 +3223,7 @@ function gapToFU(kind,id,i){
   const g=(((obj.debrief||{}).out||{}).gaps||[])[i];if(!g)return;
   const who=kind==='clinic'?((obj.doctors&&obj.doctors[0])||obj.name):obj.name;
   const d=new Date();d.setDate(d.getDate()+3);
-  S.followups.push({id:uid(),text:'Ask: '+g.missed,who,due:d.toISOString().slice(0,10),time:'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});
+  S.followups.push({id:uid(),text:'Ask: '+g.missed,who,due:isoOf(d),time:'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});
   save();render();toast('Follow-up created ✓');
 }
 
@@ -3773,6 +4001,7 @@ function vData(){
   h+='<h2>Bring old data up to date</h2><div class="card">'
     +'<p style="font-size:13.5px;line-height:1.6">Everything entered before recent updates gets the newer treatment: conversation tags, timestamps, clean dates, doctors and receptionists created and linked, tasks connected to their clinic, and your existing specialties, cities and brands remembered as options. Nothing is deleted.</p>'
     +'<button class="btn sm" onclick="repairData()">Run the upgrade</button></div>';
+  h+=recoverHTML();
   h+='<h2>App version</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Running <b>v'+APP_VERSION+'</b>. If a device is stuck on an old version, tap below — it clears the offline cache and reloads the newest build. Your data is not affected.</p><button class="btn sm sec" onclick="forceUpdate()">Force update now</button></div>';
   h+='<h2>What&rsquo;s new</h2><div class="card">'+CHANGELOG.slice(0,6).map(c=>'<div style="margin-bottom:10px"><b style="color:var(--teal)">v'+c.v+'</b> <span class="muted" style="font-size:12px">'+esc(c.date)+'</span><ul style="margin:4px 0 0 16px;font-size:13px;line-height:1.55">'+c.what.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>').join('')+'</div>';
   h+='<h2>Danger zone</h2><div class="card"><button class="btn sec" style="color:var(--red);border-color:var(--red)" onclick="resetAll()">Reset to seed data</button></div>';
@@ -3893,7 +4122,7 @@ function editGoal(id){
     v.progress=Math.max(0,Math.min(100,parseInt(v.progress)||0));
     if(id){Object.assign(g,v);}else{S.me.goals.push(Object.assign({id:uid(),checkins:[]},v));}
     save();render();
-  },id?()=>{S.me.goals=S.me.goals.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('goals',S.me.goals.find(x=>x.id===id),{type:'me',list:'goals'});S.me.goals=S.me.goals.filter(x=>x.id!==id);save();render();toast('Moved to Recover');}:null);
 }
 function checkinGoal(id){
   const g=S.me.goals.find(x=>x.id===id);
@@ -3934,7 +4163,7 @@ function editJournal(id){
   ],v=>{
     if(!v.text)return;
     e.text=v.text;save();render();
-  },()=>{S.me.journal=S.me.journal.filter(x=>x.id!==id);save();render();});
+  },()=>{bin('journal',S.me.journal.find(x=>x.id===id),{type:'me',list:'journal'});S.me.journal=S.me.journal.filter(x=>x.id!==id);save();render();toast('Moved to Recover');});
 }
 function editRoutine(id){
   const r=id?S.me.routines.find(x=>x.id===id):{text:'',freq:'daily'};
@@ -3945,7 +4174,7 @@ function editRoutine(id){
     if(!v.text)return;
     if(id){Object.assign(r,v);}else{S.me.routines.push(Object.assign({id:uid()},v));}
     save();render();
-  },id?()=>{S.me.routines=S.me.routines.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('routines',S.me.routines.find(x=>x.id===id),{type:'me',list:'routines'});S.me.routines=S.me.routines.filter(x=>x.id!==id);save();render();toast('Moved to Recover');}:null);
 }
 
 /* ---------- WEEKLY REVIEW ---------- */
@@ -4028,7 +4257,7 @@ function advanceDue(due,repeat){
   if(repeat==='daily')d.setDate(d.getDate()+1);
   else if(repeat==='weekly')d.setDate(d.getDate()+7);
   else if(repeat==='monthly')d.setMonth(d.getMonth()+1);
-  return d.toISOString().slice(0,10);
+  return isoOf(d);
 }
 function fuDone(id,sp){
   const b=fuBox(sp);const f=b.followups.find(x=>x.id===id);f.done=true;
@@ -4041,7 +4270,7 @@ function fuDone(id,sp){
 function fuSnoozeN(id,days,sp){
   const f=fuFind(id,sp);
   const base=f.due&&daysTo(f.due)>0?new Date(f.due+'T00:00'):new Date();
-  base.setDate(base.getDate()+days);f.due=base.toISOString().slice(0,10);
+  base.setDate(base.getDate()+days);f.due=isoOf(base);
   save();render();toast('Pushed to '+fmtDs(f.due));
 }
 function whoOptions(){
@@ -4068,7 +4297,7 @@ function editFU(id,sp){
     if(id)Object.assign(f,{text:v.text,who,due:v.due,time:v.time,repeat:v.repeat});
     else b.followups.push({id:uid(),done:false,created:todayISO(),ts:nowStamp(),text:v.text,who,due:v.due,time:v.time,repeat:v.repeat});
     save();render();
-  },id?()=>{b.followups=b.followups.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('followups',b.followups.find(x=>x.id===id),space==='me'?{type:'me',list:'followups'}:null);b.followups=b.followups.filter(x=>x.id!==id);save();render();toast('Moved to Recover');}:null);
 }
 /* ---------- NOTIFICATIONS ---------- */
 function icsEvent(uid,dateISO,time,title,desc,rrule){
@@ -4265,7 +4494,7 @@ function editClinic(id){
     linkClinicDoctor(c);
     linkClinicStaff(c);
     save();render();
-  },id?()=>{S.clinics=S.clinics.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('clinics',S.clinics.find(x=>x.id===id),null);S.clinics=S.clinics.filter(x=>x.id!==id);save();render();toast('Moved to Recover — nothing is gone');}:null);
 }
 
 const CITIES=['Kalaburagi','Bidar','Vijayapura','Raichur','Yadgir','Ballari','Koppal','Bagalkot','Hubballi','Belagavi','Bengaluru','Other'];
@@ -4291,7 +4520,7 @@ function editPerson(id){
     Object.assign(p,v);
     linkPersonClinic(p);
     save();render();
-  },id?()=>{S.people=S.people.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('people',S.people.find(x=>x.id===id),null);S.people=S.people.filter(x=>x.id!==id);save();render();toast('Moved to Recover — nothing is gone');}:null);
 }
 
 function editDec(id){
@@ -4316,7 +4545,7 @@ function editQ(id){
     if(!v.q)return;
     if(id){Object.assign(q,v);}else{S.questions.push(Object.assign({id:uid(),status:'open',resolution:'',created:todayISO()},v));}
     save();render();
-  },id?()=>{S.questions=S.questions.filter(x=>x.id!==id);save();render();}:null);
+  },id?()=>{bin('questions',S.questions.find(x=>x.id===id),null);S.questions=S.questions.filter(x=>x.id!==id);save();render();toast('Moved to Recover');}:null);
 }
 function qOptions(text){
   const t=(text||'');
@@ -4384,8 +4613,15 @@ function doRestore(inp){
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 backfillTags();
 if(S.meta.repairedAt!=='11.3'){try{repairData(true);S.meta.repairedAt='11.3';}catch(e){}}
-try{const mv=migrateToAccounts();const tp=tidyPeople();const n=mv+tp;
-  if(n)setTimeout(()=>toast(n+' clinic '+(n>1?'people':'person')+' moved into their clinic'),1200);}catch(e){}
+try{
+  const b4=countRecs(S)._total;
+  const mv=migrateToAccounts();const tp=tidyPeople();const n=mv+tp;
+  const dd=dedupeTrail();
+  if(dd)setTimeout(()=>toast('Tidied '+dd+' duplicate trail entries'),1800);
+  const af=countRecs(S)._total;
+  if(n)setTimeout(()=>toast(n+' clinic '+(n>1?'people':'person')+' moved into their clinic'),1200);
+  if(af<b4-n)setTimeout(()=>toast('Check Data → Recover — record count changed'),2000);
+}catch(e){}
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 applyDensity();
 applyNavStyle();
@@ -4393,6 +4629,8 @@ render();
 if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
+setInterval(()=>pushRP('hourly'),60*60*1000);
+window.addEventListener('beforeunload',()=>{try{pushRP('on closing');}catch(e){}});
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
