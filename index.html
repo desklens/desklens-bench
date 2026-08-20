@@ -293,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v11.3</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.5</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -886,12 +886,14 @@ const FORM_DEFS={
       {k:'city',l:'City',t:'chips',kind:'city'},
       {k:'stage',l:'Stage',t:'chips',kind:'stage'},
       {k:'source',l:'How it came to you',t:'chips',kind:'source'},
+      {k:'broughtBy',l:'Who introduced you',t:'chips',opts:()=>referrerNames()},
       {k:'phone',l:'Reception number',t:'tel'},
       {k:'reviews',l:'Google reviews',t:'number'},
       {k:'whoAnswers',l:'Receptionist name',t:'text'},
       {k:'whoAnswersPhone',l:'Receptionist mobile',t:'tel'},
       {k:'brand',l:'Handset brand',t:'chips',kind:'brand',hint:'Motorola/Pixel = unknown incoming only · iPhone/stock = cannot record'},
       {k:'handset',l:'Recording test',t:'chips',opts:()=>['unverified','ok','fail']},
+      {k:'consent',l:'DPDP consent',t:'chips',opts:()=>['not started','sent','signed']},
       {k:'notes',l:'Notes',t:'area'}
     ],
     init:()=>({specialty:'',city:lastCity,stage:'Lead',handset:'unverified'})
@@ -901,7 +903,7 @@ const FORM_DEFS={
     fields:[
       {k:'name',l:'Name',t:'text',req:true},
       {k:'phone',l:'Personal mobile',t:'tel'},
-      {k:'role',l:'Role',t:'chips',kind:'role'},
+      {k:'role',l:'Role in your network',t:'chips',opts:()=>NETWORK_ROLES},
       {k:'specialty',l:'Specialty (if doctor)',t:'chips',kind:'specialty'},
       {k:'clinic',l:'Clinic',t:'chips',opts:()=>S.clinics.map(c=>c.name)},
       {k:'city',l:'City',t:'chips',kind:'city'},
@@ -1739,7 +1741,7 @@ function vToday(){
   const fu=openFU().filter(f=>!f.due||daysTo(f.due)<=2);
   const paying=payingCount(),live=liveCount();
   const days=daysTo('2026-11-13');
-  let h=greeting()+coachCard();
+  let h=greeting()+pilotCard()+coachCard();
   const H=highlights();
   if(H.length)h+=H.map(x=>'<div class="hl '+x[0]+'"><i class="dot"></i><div>'+x[1]+'</div></div>').join('');
   h+='<div class="grid g4" style="margin-top:10px">'
@@ -1762,7 +1764,7 @@ function vToday(){
 function vTodayPilot(){
   const nowItems=S.sequence.filter(x=>x.bucket==='now'&&!x.done).slice(0,3);
   const fu=openFU().filter(f=>!f.due||daysTo(f.due)<=2);
-  let h=greeting()+coachCard();
+  let h=greeting()+pilotCard()+coachCard();
   if(liveCount()>=3&&!S.meta.pilotNudged){
     h+='<div class="hl good"><i class="dot"></i><div>Gate 1 passed — 3 clinics live! 🎉 Worth switching to Full Mode for the bigger picture? <a href="#" onclick="S.meta.pilotNudged=true;setPilot(false);return false">Switch now</a> · <a href="#" onclick="S.meta.pilotNudged=true;save();render();return false">later</a></div></div>';
   }
@@ -1843,7 +1845,8 @@ function vPipe(){
       +(function(){const ts=S.sequence.filter(t=>!t.done&&t.link===c.name);return ts.length?'<div class="m" style="margin-top:6px">'+ts.map(t=>'<span class="pill">task</span> '+esc(t.title)).join('\n')+'</div>':'';})()
       +(function(){const ppl=S.people.filter(p=>p.clinic===c.name&&!(c.doctors||[]).some(d=>nameEq(p.name,d)));return ppl.length?'<div class="m" style="margin-top:6px">'+ppl.map(p=>'<span class="pill grey">'+esc(p.role.split(' /')[0])+'</span> '+esc(p.name)).join('\n')+'</div>':'';})()
       +'</div><div class="acts">'
-      +'<button class="pri" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
+      +'<button class="pri" onclick="preVisit(\''+c.id+'\')">✦ Prep</button>'
+      +'<button onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
       +'<button onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
       +'<button onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
       +'<button onclick="editClinic(\''+c.id+'\')">Edit</button>'
@@ -1854,8 +1857,10 @@ function vPipe(){
 function setPF(s){pipeFilter=s;render();}
 
 function vPeople(){
-  let h='<div class="topbar"><div class="subtle">Relationships are the moat \u2014 tier-2/3 field distribution network.</div>'
+  let h='<div class="topbar"><div class="subtle">Your network — partners, associations, officials, referrers, team. Clinic staff live inside their clinic.</div>'
     +'<div style="display:flex;gap:8px"><button class="btn sm" onclick="voiceAdd(\'person\')">\ud83c\udfa4 Speak / dictate</button><button class="btn sm sec" onclick="editPerson()">+ Add person</button></div></div>';
+  h+=referrerCards();
+  if(S.people.length)h+='<h2>Your network <span class="cnt">'+S.people.length+'</span></h2>';
   h+=S.people.map(p=>{
     const fus=openFU().filter(f=>(f.who||'').toLowerCase()===p.name.toLowerCase());
     const infPill=p.influence?('<span class="pill '+(p.influence.startsWith('High')?'green':p.influence==='Medium'?'amber':'grey')+'">'+esc(p.influence.split(' \u2014')[0])+' influence</span>'):'';
@@ -1868,10 +1873,12 @@ function vPeople(){
       return [esc(p.specialty||''),[...clinicSet].map(n=>nameLink(n)).join(' + '),esc(p.city||''),p.phone?esc('\ud83d\udcf1 personal '+p.phone):'',esc(p.source||'')].filter(Boolean).join(' \u00b7 ')+(p.org&&!clinicSet.size?(' \u00b7 '+esc(p.org)):'');
     })()+'</div>'
     +((infPill||relPill)?'<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'+infPill+relPill+'</div>':'')
+    +segPills(p)
     +(p.notes?'<div class="m">'+esc(p.notes)+'</div>':'')
     +(fus.length?'<div class="m" style="margin-top:6px">'+fus.map(f=>'<span class="pill amber">follow-up</span> '+esc(f.text)+' \u00b7 '+duePill(f.due)).join('\n')+'</div>':'')
+    +(function(){const b=referralsBy(p.name);return b.length?'<div class="m"><span class="pill green">brought '+b.length+'</span> '+b.map(c=>esc(c.name)).join(', ')+'</div>':'';})()
     +(function(){const ts=[...S.sequence,...S.me.sequence].filter(t=>!t.done&&t.link===p.name);return ts.length?'<div class="m" style="margin-top:6px">'+ts.map(t=>'<span class="pill">task</span> '+esc(t.title)).join('\n')+'</div>':'';})()
-    +'</div><div class="acts"><button onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button><button onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button><button onclick="editPerson(\''+p.id+'\')">Edit</button></div></div></div>';
+    +'</div><div class="acts"><button onclick="editSeg(\''+p.id+'\')">Approach</button><button onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button><button onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button><button onclick="editPerson(\''+p.id+'\')">Edit</button></div></div></div>';
   }).join('');
   return h;
 }
@@ -1917,13 +1924,10 @@ async function gemini(parts,opts){
 
 /* ---------- RELATIONSHIP TRAIL: every touch, in order ---------- */
 function relatedFor(kind,obj){
-  /* the clinic and its doctors/staff are one relationship — gather both sides */
-  if(kind==='clinic'){
-    const people=S.people.filter(p=>p.clinic===obj.name||(obj.doctors||[]).some(d=>nameEq(d,p.name))||nameEq(p.name,obj.whoAnswers));
-    return {clinics:[obj],people};
-  }
-  const clinics=S.clinics.filter(c=>(c.doctors||[]).some(d=>nameEq(d,obj.name))||nameEq(c.whoAnswers,obj.name)||c.name===obj.clinic);
-  return {clinics,people:[obj]};
+  /* accounts model: a clinic owns its contacts, so nothing to merge */
+  if(kind==='clinic')return {clinics:[obj],people:[]};
+  const clinics=S.clinics.filter(c=>(c.broughtBy&&nameEq(c.broughtBy,obj.name)));
+  return {clinics:[],people:[obj],referred:clinics};
 }
 function trailFor(kind,obj){
   const T=[];
@@ -2178,14 +2182,21 @@ async function convRun(){
   if(f&&f.size>18*1024*1024){alert('That file is '+(f.size/1048576).toFixed(1)+' MB. Keep recordings under ~18 MB (about 10 minutes) — or paste the transcript instead.');return;}
   $('modal').innerHTML='<h3>Listening…</h3><div class="note">'+(f?'Transcribing and extracting. A few-minute call takes ~20–40 seconds.':'Extracting the key points.')+'</div>';
   const known=S.people.slice(0,25).map(p=>p.name).join('; ');
-  const instruction='Sales conversation between Vinay (founder, DeskLens — AI call intelligence for Indian clinics, ₹6,000/month, sells via a free 7-day call audit) and people at "'+conv.name+'". Today is '+todayISO()+'. Known contacts: '+known+'.\n'
-    +'Extract only what was said; never invent. JSON only:\n'
-    +'{"summary":"3-4 sentences","points":["facts worth remembering"],'
+  const instruction='Vinay (founder of DeskLens) is recording notes about "'+conv.name+'". Today is '+todayISO()+'. Known contacts: '+known+'.\n'
+    +'THESE ARE HIS PRIVATE NOTES. He already knows what DeskLens is, what it costs, and what his own pitch is — NEVER restate the product, its price, its features, or his strategy. '
+    +'Never write sentences like "Vinay visited X to pitch DeskLens, an AI call intelligence tool priced at ₹6,000/month". '
+    +'Record ONLY new information about them: who they are, how they operate, what they said, what they use today, what they decided, what they want. '
+    +'Write like a sharp field note — compact, factual, no framing, no marketing language, no explanation of things he told you. '
+    +'If he mentions the price only as context, ignore it unless THEY reacted to it. Extract only what was said; never invent. JSON only:\n'
+    +'{"summary":"2-3 sentences, only what is new about THEM — start with the subject, not with Vinay or the product","points":["short factual notes worth remembering — how they operate, what they use, who decides"],'
     +'"commitments":[{"who":"Vinay or their name","what":"promise","due":"YYYY-MM-DD or empty"}],'
     +'"objections":["pushback in their words"],"pricing":["price/budget/competitor mentions"],'
     +'"people":[{"name":"","role":""}],"nextStep":"clearest next action",'
     +'"wasVisit":true_if_he_physically_went_there_else_false,"visitTime":"HH:MM if a time was mentioned else empty",'
     +'"tasks":["things Vinay must do himself that are not promises to them"],'
+    +'"clinicFacts":{"brand":"handset brand if mentioned, one of ['+optList('brand').join(' | ')+']","handset":"ok if a recording test passed, fail if it does not record, else empty","phone":"clinic reception number if given","whoAnswers":"receptionist name if named","whoAnswersPhone":"receptionist mobile if given","reviews":"google review count if said","city":"city if said","specialty":"specialty if clear","doctors":["doctor names mentioned as working there"]},'
+    +'"software":[{"name":"any software/app/service they said they use","cat":"one of: '+SYS_CATS.join(' | ')+'","feel":"how they spoke about it or empty"}],'
+    +'"orbit":[{"name":"anyone described as regularly visiting or influencing the doctor","who":"one of: '+ORBIT_WHO.join(' | ')+'","freq":"one of: '+ORBIT_FREQ.join(' | ')+'"}],'
     +'"tags":["pick 1-4 from: '+CONV_TAGS.join(', ')+'"],'
     +'"suggestedStage":"Lead|Audit (7-day)|Design Partner|Pilot|Paying|Renewed|","sentimentNote":"one line on how warm or hesitant"}';
   try{
@@ -2212,6 +2223,8 @@ async function convRun(){
   }
 }
 function convSaveRaw(){
+  const _k=conv&&conv.kind,_i=conv&&conv.id;
+  setTimeout(()=>{if(S.meta.aiKey&&_k&&_i)debrief(_k,_i);},700);
   const txt=($('cvtxt')&&$('cvtxt').value||'').trim();
   if(!txt){toast('Nothing to save');return;}
   const date=($('cvdate')&&$('cvdate').value)||todayISO();
@@ -2222,6 +2235,38 @@ function convSaveRaw(){
   jlog('call','Conversation noted — '+obj.name+': '+txt.slice(0,70),date);
   conv=null;closeModal();save();render();
   toast('Notes saved to the trail ✓ — analyse later from the clinic page');
+}
+/* what the conversation says about the clinic record itself */
+const FACT_LABELS={brand:'Handset brand',handset:'Recording test',phone:'Reception number',whoAnswers:'Receptionist',
+  whoAnswersPhone:'Receptionist mobile',reviews:'Google reviews',city:'City',specialty:'Specialty'};
+function factsFromText(txt,c){
+  const f={};
+  const b=bestMatch(txt,optList('brand'));if(b)f.brand=b;
+  if(/record(ing)?\s+(test\s+)?(passed|works|working|ok)/i.test(txt))f.handset='ok';
+  if(/(does not|doesn.t|not)\s+record/i.test(txt))f.handset='fail';
+  const rev=txt.match(/(\d{2,5})\s*(google\s*)?(reviews?|ratings?)/i);if(rev)f.reviews=rev[1];
+  const rc=txt.match(/recept(?:ionist)?\s+(?:is\s+)?([A-Z][a-z]+)/);if(rc)f.whoAnswers=rc[1];
+  const ct=bestMatch(txt,optList('city'));if(ct)f.city=ct;
+  const sp=bestMatch(txt,optList('specialty'));if(sp)f.specialty=sp;
+  return f;
+}
+function pendingFacts(){
+  const o=conv.out||{},c=conv.kind==='clinic'?S.clinics.find(x=>x.id===conv.id):null;
+  if(!c)return [];
+  const facts=Object.assign({},factsFromText((conv._keep&&conv._keep.txt)||'',c),o.clinicFacts||{});
+  const rows=[];
+  Object.keys(FACT_LABELS).forEach(k=>{
+    const v=String(facts[k]||'').trim();
+    if(!v)return;
+    let cur=String(c[k]||'').trim();
+    if(/^(unverified|unknown|other|—|-)$/i.test(cur))cur='';   // placeholders aren't real values
+    if(cur.toLowerCase()===v.toLowerCase())return;
+    rows.push({k,label:FACT_LABELS[k],from:cur,to:v,isNew:!cur});
+  });
+  ((o.clinicFacts||{}).doctors||[]).forEach(dn=>{
+    if(dn&&!contacts(c).some(x=>nameEq(x.name,dn)))rows.push({k:'doctor',label:'New doctor',from:'',to:dn,isNew:true});
+  });
+  return rows;
 }
 function renderConvReview(){
   const o=conv.out||{};
@@ -2235,6 +2280,14 @@ function renderConvReview(){
   if(o.commitments&&o.commitments.length){
     h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Promises → follow-ups</b>'
       +o.commitments.map((c,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px"><input type="checkbox" id="cvc'+i+'" checked style="margin-top:3px"><span><b>'+esc(c.what||'')+'</b><br><span class="subtle">'+esc(c.who||'')+(c.due?' · due '+esc(c.due):' · no date')+'</span></span></label>').join('')
+      +'</div>';
+  }
+  const facts=pendingFacts();
+  if(facts.length){
+    h+='<div class="card" style="margin-bottom:10px;border-left:4px solid var(--teal)"><b style="font-size:13px">Update the clinic record</b>'
+      +'<div class="note" style="margin:2px 0 6px">Picked up from what you said. Existing values are unticked so nothing is overwritten by accident.</div>'
+      +facts.map((f,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:7px;font-size:13px"><input type="checkbox" id="cvf'+i+'"'+(f.isNew?' checked':'')+' style="margin-top:3px">'
+        +'<span><b>'+esc(f.label)+':</b> '+(f.from?'<span class="subtle" style="text-decoration:line-through">'+esc(f.from)+'</span> → ':'')+esc(f.to)+'</span></label>').join('')
       +'</div>';
   }
   const visitGuess=(o.wasVisit===true)||/\b(visited|went to|met at|at the clinic|in person)\b/i.test((o.summary||'')+' '+(conv._keep&&conv._keep.txt||''));
@@ -2289,6 +2342,38 @@ function convSave(){
     obj.stage=o.suggestedStage;
     if(['Paying','Renewed'].includes(o.suggestedStage))celebrate();
   }
+  // clinic record updates the conversation revealed
+  let facts=0;
+  if(conv.kind==='clinic'){
+    pendingFacts().forEach((f,i)=>{
+      const cb=$('cvf'+i);if(cb&&!cb.checked)return;
+      if(f.k==='doctor'){
+        obj.contacts=obj.contacts||[];
+        if(!contacts(obj).some(x=>nameEq(x.name,f.to))){obj.contacts.push({id:uid(),name:f.to,role:'Doctor',phone:''});facts++;}
+        if(!(obj.doctors||[]).some(d=>nameEq(d,f.to)))obj.doctors=[...(obj.doctors||[]),f.to];
+      }else{
+        obj[f.k]=f.to;facts++;
+        if(f.k==='whoAnswers'){
+          obj.contacts=obj.contacts||[];
+          if(!contacts(obj).some(x=>nameEq(x.name,f.to)))obj.contacts.push({id:uid(),name:f.to,role:'Receptionist',phone:obj.whoAnswersPhone||''});
+        }
+      }
+    });
+  }
+  // software they mentioned
+  (o.software||[]).forEach(sw=>{
+    if(!sw||!sw.name||conv.kind!=='clinic')return;
+    obj.systems=obj.systems||[];
+    if(!obj.systems.some(x=>nameEq(x.name,sw.name)))
+      obj.systems.push({id:uid(),name:sw.name,cat:SYS_CATS.includes(sw.cat)?sw.cat:'Other software',cost:'',feel:SYS_FEEL.includes(sw.feel)?sw.feel:'',notes:'From conversation '+fmtD(conv.date)});
+  });
+  // people who orbit the doctor
+  (o.orbit||[]).forEach(ob=>{
+    if(!ob||!ob.name||conv.kind!=='clinic')return;
+    obj.orbit=obj.orbit||[];
+    if(!obj.orbit.some(x=>nameEq(x.name,ob.name)))
+      obj.orbit.push({id:uid(),name:ob.name,who:ORBIT_WHO.includes(ob.who)?ob.who:'Other',freq:ORBIT_FREQ.includes(ob.freq)?ob.freq:'Occasionally',close:'',intro:'no',notes:'Mentioned '+fmtD(conv.date)});
+  });
   (o.people||[]).forEach(pp=>{
     if(!pp||!pp.name)return;
     if(!S.people.some(x=>nameEq(x.name,pp.name))&&/^dr\.?\s/i.test(pp.name)){
@@ -2297,11 +2382,14 @@ function convSave(){
     }
   });
   jlog('call','Conversation logged — '+obj.name+(o.summary?': '+o.summary.slice(0,70):''),conv.date);
+  const dk=conv.kind,di=conv.id;
   conv=null;closeModal();save();render();
+  if(S.meta.aiKey)setTimeout(()=>debrief(dk,di),700);
   const bits=[];
   if(vlog)bits.push('visit logged');
   if(n)bits.push(n+' follow-up'+(n>1?'s':''));
   if(tlog)bits.push(tlog+' task'+(tlog>1?'s':''));
+  if(facts)bits.push(facts+' record update'+(facts>1?'s':''));
   toast('Saved'+(bits.length?' · '+bits.join(' · '):''));
 }
 
@@ -2421,6 +2509,32 @@ function coachCandidates(){
   const feat=allConvs().filter(x=>(x.v.tags||[]).includes('Feature request'));
   if(feat.length>=2)push(52,'product',feat.length+' clinics have now asked for the same kind of feature',
     'Feature requests are stacking up ('+[...new Set(feat.map(f=>f.who))].slice(0,3).join(', ')+'). Worth turning into a decision with Karthik rather than a memory.',null);
+  // 11c. What their stack and their circle tell you
+  S.clinics.filter(c=>ACTIVE_STAGES.includes(c.stage)||c.stage==='Lead').forEach(c=>{
+    const sys=systems(c),orb=orbit(c);
+    const unhappy=sys.find(s=>/Frustrat|Barely/.test(s.feel||''));
+    if(unhappy)push(66,'wedge','Use their frustration with '+unhappy.name+' at '+c.name,
+      'They already pay for software and are unhappy with it — budget exists and the door is open. Ask what it fails to tell them.',{t:'clinic',id:c.id});
+    if(sys.some(s=>/lead gen|advertis/i.test(s.cat)))push(62,'wedge','Ask '+c.name+' what their ad and listing spend actually converts',
+      'They pay for leads ('+sys.filter(s=>/lead gen|advertis/i.test(s.cat)).map(s=>s.name).join(', ')+'). Missed calls are money they have already spent — your sharpest angle.',{t:'clinic',id:c.id});
+    const intro=orb.find(o=>o.intro==='yes');
+    if(intro)push(58,'leverage','Ask '+intro.name+' at '+c.name+' for an introduction',
+      intro.who+' who the doctor trusts and who you have marked as able to introduce you. Cheapest path to the next clinic.',{t:'clinic',id:c.id});
+    if(ACTIVE_STAGES.includes(c.stage)&&!sys.length)push(38,'data','Find out what software '+c.name+' already uses',
+      'What they pay for tells you their budget, where their leads come from, and what you sit beside.',{t:'clinic',id:c.id});
+  });
+  // 11d. The pilot clock
+  (function(){
+    const p=S.meta.pilot;if(!p||!p.date)return;
+    const d=daysTo(p.date),blockers=pilotChecks().filter(x=>!x.done);
+    if(d>=0&&d<=21&&blockers.length){
+      push(d<=7?110:d<=14?88:70,'pilot','Pilot in '+d+' days — '+blockers[0].label.toLowerCase(),
+        blockers.length+' item'+(blockers.length>1?'s':'')+' still open before '+fmtD(p.date)+'. This is the date everything else waits on.',
+        pilotClinic()?{t:'clinic',id:pilotClinic().id}:null);
+    }
+    if(d<0&&blockers.length)push(115,'pilot','Pilot date has passed with '+blockers.length+' item'+(blockers.length>1?'s':'')+' open',
+      'Either clear them this week or move the date honestly — a slipping date you do not move stops meaning anything.',null);
+  })();
   // 12. Hygiene
   const bk=S.meta.lastBackup?daysAgo(S.meta.lastBackup):999;
   if(bk>10)push(35,'hygiene','Take a backup','Last backup '+(S.meta.lastBackup?bk+' days ago':'never')+'. Sync covers device loss, backups cover mistakes.',null);
@@ -2510,6 +2624,448 @@ function coachCard(){
   return h+'</div>';
 }
 
+/* ---------- ACCOUNTS: clinic contacts live inside the clinic ---------- */
+const CONTACT_ROLES=['Doctor','Partner doctor','Receptionist','Front desk staff','Clinic manager','Owner (non-doctor)','Other staff'];
+const NETWORK_ROLES=['Channel partner','Commission partner','Association office-bearer','Official (KPME / IMA / DHO)','Referring doctor','Team','Vendor','Friend / personal','Other'];
+/* network roles stay in People; everyone else attached to a clinic belongs to that clinic */
+const NETWORK_ONLY=r=>/commission|channel|association|official|kpme|ima|dho|team|co-?founder|vendor|friend|personal/i.test(r||'');
+const CLINICAL_ROLE=r=>!NETWORK_ONLY(r);
+const contactRoleFor=r=>/recept|front desk/i.test(r||'')?'Receptionist':/manager/i.test(r||'')?'Clinic manager':/owner/i.test(r||'')?'Owner (non-doctor)':/staff/i.test(r||'')?'Other staff':'Doctor';
+function contacts(c){return c.contacts||[];}
+function primaryDoc(c){const d=contacts(c).find(x=>/doctor/i.test(x.role));return d?d.name:'';}
+function contactNames(c){return contacts(c).map(x=>x.name);}
+/* One-time move: clinical people become contacts inside their clinic; their conversations move with them */
+function migrateToAccounts(){
+  if(S.meta.accounts==='v1')return 0;
+  let moved=0,convs=0;
+  S.clinics.forEach(c=>{
+    c.contacts=c.contacts||[];
+    // doctors named on the clinic
+    (c.doctors||[]).forEach(dn=>{
+      if(!c.contacts.some(x=>nameEq(x.name,dn)))c.contacts.push({id:uid(),name:dn,role:'Doctor',phone:''});
+    });
+    // receptionist recorded on the clinic
+    if(c.whoAnswers&&!c.contacts.some(x=>nameEq(x.name,c.whoAnswers)))
+      c.contacts.push({id:uid(),name:c.whoAnswers,role:'Receptionist',phone:c.whoAnswersPhone||''});
+  });
+  // pull clinical People into their clinic, carrying everything
+  const keep=[];
+  S.people.forEach(p=>{
+    const target=S.clinics.find(c=>c.name===p.clinic)
+      ||S.clinics.find(c=>(c.doctors||[]).some(d=>nameEq(d,p.name))||nameEq(c.whoAnswers,p.name));
+    if(target&&CLINICAL_ROLE(p.role)){
+      let ct=target.contacts.find(x=>nameEq(x.name,p.name));
+      if(!ct){ct={id:uid(),name:p.name,role:contactRoleFor(p.role),phone:''};target.contacts.push(ct);}
+      if(/referral|refer/i.test(p.role||''))ct.referrer=true;
+      ct.phone=ct.phone||p.phone||'';
+      ct.specialty=ct.specialty||p.specialty||'';
+      ct.influence=ct.influence||p.influence||'';
+      ct.rel=ct.rel||p.rel||'';
+      ct.notes=[ct.notes,p.notes].filter(Boolean).join(' · ');
+      SEG_KEYS.forEach(k=>{if(p[k]&&!ct[k])ct[k]=p[k];});
+      (p.calls||[]).forEach(v=>{target.calls=target.calls||[];target.calls.push(Object.assign({},v,{with:p.name}));convs++;});
+      moved++;
+    }else{
+      // network person — normalise the role into the network vocabulary
+      if(/design partner|doctor/i.test(p.role)&&!CLINICAL_ROLE(p.role))p.role='Referring doctor';
+      if(/co-founder/i.test(p.role))p.role='Team';
+      if(/official/i.test(p.role))p.role='Official (KPME / IMA / DHO)';
+      if(/association/i.test(p.role))p.role='Association office-bearer';
+      if(/commission/i.test(p.role))p.role='Commission partner';
+      p.broughtClinics=p.broughtClinics||[];
+      keep.push(p);
+    }
+  });
+  S.people=keep;
+  S.meta.accounts='v1';
+  save();
+  return moved;
+}
+/* everyone who can introduce you to a clinic — contacts flagged as referrers + your network */
+function referrerNames(){
+  const a=[];
+  S.clinics.forEach(c=>contacts(c).forEach(ct=>{if(ct.referrer)a.push(ct.name);}));
+  S.people.forEach(p=>a.push(p.name));
+  return [...new Set(a)];
+}
+function referralsBy(name){return S.clinics.filter(c=>nameEq(c.broughtBy,name));}
+function referrerCards(){
+  const rows=[];
+  S.clinics.forEach(c=>contacts(c).forEach(ct=>{if(ct.referrer)rows.push({name:ct.name,where:c.name,clinicId:c.id,contact:ct});}));
+  if(!rows.length)return '';
+  return '<h2>Referrers inside clinics <span class="cnt">'+rows.length+'</span></h2>'
+    +'<div class="subtle" style="margin-bottom:8px">They stay on their clinic record — shown here because they open doors.</div>'
+    +rows.map(r=>{
+      const brought=referralsBy(r.name);
+      return '<div class="item"><div class="irow"><div>'
+        +'<div class="t" style="cursor:pointer" data-oc="'+r.clinicId+'">'+esc(r.name)+' <span class="subtle" style="font-weight:400">at '+esc(r.where)+' ›</span></div>'
+        +'<div class="m">'+contactPills(r.contact)+'</div>'
+        +(brought.length?'<div class="m"><span class="pill green">brought '+brought.length+'</span> '+brought.map(c=>esc(c.name)).join(', ')+'</div>'
+          :'<div class="m subtle">No clinics attributed yet</div>')
+        +'</div><div class="acts"><button data-oc="'+r.clinicId+'">Open clinic</button></div></div></div>';
+    }).join('');
+}
+function contactPills(ct){
+  const bits=[];
+  if(ct.role)bits.push('<span class="pill '+(/doctor/i.test(ct.role)?'':'grey')+'">'+esc(ct.role)+'</span>');
+  if(ct.influence)bits.push('<span class="pill '+(String(ct.influence).startsWith('High')?'green':'grey')+'">'+esc(String(ct.influence).split(' —')[0])+'</span>');
+  if(ct.power)bits.push('<span class="pill green">'+esc(ct.power)+'</span>');
+  if(ct.aware)bits.push('<span class="pill '+(ct.aware==='Burned before'?'red':'grey')+'">'+esc(ct.aware)+'</span>');
+  if(ct.driver)bits.push('<span class="pill violet">'+esc(ct.driver)+'</span>');
+  return bits.join(' ');
+}
+function editContact(clinicId,contactId){
+  const c=S.clinics.find(x=>x.id===clinicId);if(!c)return;
+  c.contacts=c.contacts||[];
+  const ct=contactId?c.contacts.find(x=>x.id===contactId):{name:'',role:'Doctor',phone:'',specialty:'',notes:''};
+  openModal(contactId?'Edit contact':'Add someone at '+c.name,[
+    {key:'name',label:'Name',value:ct.name},
+    {key:'role',label:'Role at this clinic',type:'select',options:CONTACT_ROLES,value:ct.role},
+    {key:'phone',label:'Personal mobile',type:'tel',value:ct.phone||''},
+    {key:'specialty',label:'Specialty (if doctor)',type:'select',kind:'specialty',allowBlank:true,value:ct.specialty||''},
+    {key:'influence',label:'Influence',type:'select',kind:'influence',allowBlank:true,value:ct.influence||''},
+    {key:'rel',label:'Relationship',type:'select',kind:'rel',allowBlank:true,value:ct.rel||''},
+    {key:'referrer',label:'Also refers other doctors to you?',type:'select',options:['no','yes'],value:ct.referrer?'yes':'no'},
+    {key:'notes',label:'Notes',type:'textarea',value:ct.notes||''}
+  ],v=>{
+    if(!v.name)return;
+    v.referrer=(v.referrer==='yes');
+    if(contactId)Object.assign(ct,v);
+    else c.contacts.push(Object.assign({id:uid()},v));
+    if(/doctor/i.test(v.role)&&!(c.doctors||[]).some(d=>nameEq(d,v.name)))c.doctors=[...(c.doctors||[]),v.name];
+    if(/recept/i.test(v.role)&&!c.whoAnswers){c.whoAnswers=v.name;c.whoAnswersPhone=v.phone||'';}
+    save();render();toast('Saved ✓');
+  },contactId?()=>{c.contacts=c.contacts.filter(x=>x.id!==contactId);save();render();}:null);
+}
+
+/* ---------- PILOT COUNTDOWN: days left, and what still blocks it ---------- */
+function pilotCfg(){
+  if(!S.meta.pilot)S.meta.pilot={date:'2026-09-01',clinicId:'',extra:[]};
+  return S.meta.pilot;
+}
+function pilotClinic(){const p=pilotCfg();return S.clinics.find(c=>c.id===p.clinicId)||null;}
+function pilotChecks(){
+  const p=pilotCfg(),c=pilotClinic(),out=[];
+  out.push({k:'clinic',label:'Pilot clinic chosen',done:!!c,detail:c?c.name:'Pick which clinic goes first',
+    act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'brand',label:'Handset brand known',done:!!(c&&c.brand),detail:c?(c.brand||'Not recorded'):'—',act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'capable',label:'That handset can record',done:!!(c&&brandClass(c.brand)==='full'),
+    detail:c?(brandClass(c.brand)==='full'?'Records all calls':brandClass(c.brand)==='partial'?c.brand+' — unknown-number incoming only':brandClass(c.brand)==='none'?c.brand+' cannot record':'Unknown'):'—',act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'test',label:'Recording test call passed',done:!!(c&&c.handset==='ok'),detail:c?c.handset:'—',act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'consent',label:'Consent signed (DPDP Doc #1)',done:!!(c&&c.consent==='signed'),
+    detail:c?(c.consent||'not started'):'—',act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'rec',label:'Reception knows what happens',done:!!(c&&c.whoAnswers),detail:c?(c.whoAnswers||'Receptionist not recorded'):'—',act:c?{t:'clinic',id:c.id}:null});
+  out.push({k:'karthik',label:'No blocking questions with Karthik',done:S.questions.filter(q=>q.status==='open'&&/firebase|supabase|retention|prompt|architecture|build/i.test(q.q)).length===0,
+    detail:S.questions.filter(q=>q.status==='open').length+' open questions'});
+  (p.extra||[]).forEach((x,i)=>out.push({k:'x'+i,label:x.label,done:!!x.done,detail:'',manual:i}));
+  return out;
+}
+function setPilot(){
+  const p=pilotCfg();
+  openModal('First pilot',[
+    {key:'date',label:'Go-live date',type:'date',value:p.date},
+    {key:'clinicId',label:'Which clinic goes first',type:'select',options:['',...S.clinics.map(c=>c.name)],value:(pilotClinic()||{}).name||''},
+    {key:'extra',label:'Anything else that must be ready (one per line)',type:'textarea',value:(p.extra||[]).map(x=>x.label).join('\n')}
+  ],v=>{
+    const c=S.clinics.find(x=>x.name===v.clinicId);
+    const prev=p.extra||[];
+    S.meta.pilot={date:v.date||p.date,clinicId:c?c.id:'',
+      extra:v.extra.split('\n').map(s=>s.trim()).filter(Boolean).map(l=>({label:l,done:(prev.find(y=>y.label===l)||{}).done||false}))};
+    save();render();toast('Pilot set ✓');
+  });
+}
+function togglePilotExtra(i){const p=pilotCfg();if(p.extra[i]){p.extra[i].done=!p.extra[i].done;save();render();}}
+function pilotCard(){
+  const p=pilotCfg(),c=pilotClinic();
+  const d=daysTo(p.date);
+  const checks=pilotChecks(),done=checks.filter(x=>x.done).length;
+  const pct=Math.round(done/checks.length*100);
+  const blockers=checks.filter(x=>!x.done);
+  const tone=d<0?'bad':blockers.length===0?'good':d<=7&&blockers.length>2?'bad':d<=14?'warn':'info';
+  let h='<div class="card" style="margin-bottom:12px;border-left:4px solid var(--'+(tone==='bad'?'red':tone==='warn'?'amber':'teal')+')">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+    +'<div><b style="font-size:15px">First pilot</b><div class="m" style="margin-top:2px">'+(c?esc(c.name):'No clinic chosen yet')+' · '+fmtD(p.date)+'</div></div>'
+    +'<div style="text-align:right"><div style="font-family:IBM Plex Mono,monospace;font-size:26px;font-weight:700;color:var(--'+(d<7?'red':'teal')+')">'
+      +(d<0?Math.abs(d)+'d late':d===0?'today':d+'d')+'</div><div class="subtle">'+done+' of '+checks.length+' ready</div></div></div>'
+    +'<div class="gatebar" style="margin-top:10px"><div class="fill" style="width:'+pct+'%"></div></div>';
+  h+=checks.map(x=>'<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:13px'+(x.done?';opacity:.55':'')+'">'
+    +'<span style="color:'+(x.done?'var(--green)':'var(--muted)')+'">'+(x.done?'✓':'○')+'</span>'
+    +'<span'+(x.manual!==undefined?' style="cursor:pointer" onclick="togglePilotExtra('+x.manual+')"':x.act?' style="cursor:pointer" data-oc="'+x.act.id+'"':'')+'>'
+    +esc(x.label)+(x.detail?' <span class="subtle">— '+esc(x.detail)+'</span>':'')+'</span></div>').join('');
+  if(blockers.length&&d>=0)h+='<div class="hl '+(d<=14?'warn':'info')+'" style="margin-top:8px"><i class="dot"></i><div>'
+    +(d<=7?'One week out with ':'')+blockers.length+' thing'+(blockers.length>1?'s':'')+' still open. Next: <b>'+esc(blockers[0].label)+'</b>.</div></div>';
+  if(!blockers.length)h+='<div class="hl good" style="margin-top:8px"><i class="dot"></i><div>Everything on this list is ready. Go.</div></div>';
+  h+='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm sec" onclick="setPilot()">Edit pilot</button>'
+    +(c?'<button class="btn sm sec" onclick="openClinic(\''+c.id+'\')">Open '+esc(c.name.split(' ')[0])+'</button>':'')+'</div>';
+  return h+'</div>';
+}
+
+/* ---------- WHAT THEY RUN ON, AND WHO HAS THEIR EAR ---------- */
+const SYS_CATS=['Practice management','Billing / accounting','Appointments & reminders','Lead generation','Advertising','WhatsApp / messaging','Lab / imaging','Other software'];
+const SYS_FEEL=['Happy with it','Tolerates it','Frustrated','Barely uses it'];
+const ORBIT_WHO=['Medical rep (pharma)','Lab / diagnostics rep','Equipment dealer','Software / IT vendor','Chartered accountant','Family member','Friend doctor','Staff confidant','Consultant / advisor','Other'];
+const ORBIT_FREQ=['Daily','Weekly','Monthly','Occasionally'];
+const ORBIT_CLOSE=['Trusted — doctor listens','Friendly','Transactional'];
+function systems(c){return c.systems||[];}
+function orbit(c){return c.orbit||[];}
+function editSystem(clinicId,sysId){
+  const c=S.clinics.find(x=>x.id===clinicId);if(!c)return;
+  c.systems=c.systems||[];
+  const s=sysId?c.systems.find(x=>x.id===sysId):{name:'',cat:'Practice management',cost:'',feel:'',notes:''};
+  openModal(sysId?'Edit software':'Software at '+c.name,[
+    {key:'name',label:'What do they use?',value:s.name},
+    {key:'cat',label:'What for',type:'select',options:SYS_CATS,value:s.cat},
+    {key:'cost',label:'What it costs them (if known)',value:s.cost||''},
+    {key:'feel',label:'How they feel about it',type:'select',options:['',...SYS_FEEL],value:s.feel||''},
+    {key:'notes',label:'Notes',type:'textarea',value:s.notes||''}
+  ],v=>{
+    if(!v.name)return;
+    if(sysId)Object.assign(s,v);else c.systems.push(Object.assign({id:uid()},v));
+    save();render();toast('Saved ✓');
+  },sysId?()=>{c.systems=c.systems.filter(x=>x.id!==sysId);save();render();}:null);
+}
+function editOrbit(clinicId,oid){
+  const c=S.clinics.find(x=>x.id===clinicId);if(!c)return;
+  c.orbit=c.orbit||[];
+  const o=oid?c.orbit.find(x=>x.id===oid):{name:'',who:'Medical rep (pharma)',freq:'Weekly',close:'',intro:'no',notes:''};
+  openModal(oid?'Edit person':'Who else has the doctor’s ear at '+c.name,[
+    {key:'name',label:'Name (or “the Cipla rep” if you don’t know it)',value:o.name},
+    {key:'who',label:'Who they are',type:'select',options:ORBIT_WHO,value:o.who},
+    {key:'freq',label:'How often they come',type:'select',options:ORBIT_FREQ,value:o.freq},
+    {key:'close',label:'How close',type:'select',options:['',...ORBIT_CLOSE],value:o.close||''},
+    {key:'intro',label:'Could they introduce you elsewhere?',type:'select',options:['no','maybe','yes'],value:o.intro||'no'},
+    {key:'notes',label:'Notes',type:'textarea',value:o.notes||''}
+  ],v=>{
+    if(!v.name)return;
+    if(oid)Object.assign(o,v);else c.orbit.push(Object.assign({id:uid()},v));
+    save();render();toast('Saved ✓');
+  },oid?()=>{c.orbit=c.orbit.filter(x=>x.id!==oid);save();render();}:null);
+}
+function systemsHTML(c){
+  const list=systems(c);
+  let h='<h2>Software they run on <span class="cnt">'+list.length+'</span><button class="btn sm sec" style="margin-left:auto" onclick="editSystem(\''+c.id+'\')">+ Add</button></h2>';
+  if(!list.length)return h+'<div class="empty">Nothing recorded. What they already pay for tells you their budget and where their leads come from.</div>';
+  return h+list.map(s=>'<div class="item"><div class="irow"><div>'
+    +'<div class="t">'+esc(s.name)+' <span class="pill grey">'+esc(s.cat)+'</span>'+(s.feel?' <span class="pill '+(/Frustrat|Barely/.test(s.feel)?'amber':'')+'">'+esc(s.feel)+'</span>':'')+'</div>'
+    +(s.cost?'<div class="m">Pays: '+esc(s.cost)+'</div>':'')
+    +(s.notes?'<div class="m">'+esc(s.notes)+'</div>':'')
+    +'</div><div class="acts"><button onclick="editSystem(\''+c.id+'\',\''+s.id+'\')">Edit</button></div></div></div>').join('');
+}
+function orbitHTML(c){
+  const list=orbit(c);
+  let h='<h2>Who has their ear <span class="cnt">'+list.length+'</span><button class="btn sm sec" style="margin-left:auto" onclick="editOrbit(\''+c.id+'\')">+ Add</button></h2>';
+  if(!list.length)return h+'<div class="empty">Nobody mapped yet. In tier-2/3, trust arrives through the people already in the room.</div>';
+  return h+list.sort((a,b)=>ORBIT_FREQ.indexOf(a.freq)-ORBIT_FREQ.indexOf(b.freq)).map(o=>'<div class="item"><div class="irow"><div>'
+    +'<div class="t">'+esc(o.name)+' <span class="pill grey">'+esc(o.who)+'</span>'
+      +(o.close?' <span class="pill '+(/Trusted/.test(o.close)?'green':'')+'">'+esc(o.close.split(' —')[0])+'</span>':'')
+      +(o.intro==='yes'?' <span class="pill green">can introduce</span>':o.intro==='maybe'?' <span class="pill amber">maybe introduces</span>':'')+'</div>'
+    +'<div class="m">Comes '+esc(String(o.freq).toLowerCase())+(o.notes?' · '+esc(o.notes):'')+'</div>'
+    +'</div><div class="acts"><button onclick="editOrbit(\''+c.id+'\',\''+o.id+'\')">Edit</button></div></div></div>').join('');
+}
+
+/* ---------- PRE-VISIT BRIEF ---------- */
+function clinicDossier(c){
+  const doctors=S.people.filter(p=>(c.doctors||[]).some(d=>nameEq(d,p.name)));
+  const rec=S.people.find(p=>nameEq(p.name,c.whoAnswers));
+  return {
+    clinic:{name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,source:c.source||'',reviews:c.reviews||'',
+      receptionist:c.whoAnswers||'',handsetBrand:c.brand||'unknown',recordingCapable:brandClass(c.brand),recordingTested:c.handset,
+      notes:cut(c.notes,220),lastVisitDaysAgo:lastVisit(c)?daysAgo(lastVisit(c)):null,visits:(c.visits||[]).length,
+      stageHistory:(c.stageHistory||[]).map(s=>s.stage+'@'+s.date)},
+    doctors:doctors.map(p=>({name:p.name,specialty:p.specialty||'',influence:p.influence||'',relationship:p.rel||'',
+      buyingPower:p.power||'',awareness:p.aware||'',valueDriver:p.driver||'',ticket:p.ticket||'',leverage:p.leverage||'',frontDesk:p.desk||'',tech:p.tech||'',notes:cut(p.notes,180)})),
+    receptionist:rec?{name:rec.name,phone:rec.phone||''}:null,
+    conversations:trailFor('clinic',c).filter(x=>x.type==='call').slice(0,6).map(x=>({daysAgo:daysAgo(x.date),said:cut(x.body,260),
+      points:(x.points||[]).slice(0,5),objections:x.objections||[],pricing:x.pricing||[],next:x.next||'',tags:x.tags||[]})),
+    visits:(c.visits||[]).slice(-4).map(v=>({daysAgo:daysAgo(v.date),note:cut(v.note,200)})),
+    openPromises:allFU().filter(f=>[c.name,...(c.doctors||[]),c.whoAnswers].filter(Boolean).some(n=>nameEq(n,f.f.who)))
+      .map(f=>({what:cut(f.f.text,140),due:f.f.due,overdueDays:f.f.due?Math.max(0,-daysTo(f.f.due)):0})),
+    openTasks:S.sequence.filter(t=>!t.done&&(t.link===c.name||(c.doctors||[]).some(d=>nameEq(d,t.link)))).map(t=>cut(t.title,120))
+  };
+}
+async function preVisit(id){
+  const c=S.clinics.find(x=>x.id===id);if(!c)return;
+  if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
+  $('modal').innerHTML='<h3>Preparing…</h3><div class="note">Reading everything about '+esc(c.name)+'.</div>';
+  $('overlay').classList.add('open');
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF
+      +'\n\nVinay is about to walk into this clinic. Write his pre-visit brief. Be specific and short — he will read it in the car. '
+      +'Use only what is in the data; if something important is unknown, put it in "find out".\n'
+      +'Return ONLY JSON: {"headline":"one line: what this visit is really for",'
+      +'"remember":["3-5 facts he must have in his head — names, what they said last time, promises outstanding"],'
+      +'"open_with":"the exact opening line or angle, matched to their awareness and what they would buy",'
+      +'"ask":["3-4 questions he should ask this visit, in priority order"],'
+      +'"objection_ready":{"likely":"the objection most likely to come up","answer":"how to answer it in one or two sentences"},'
+      +'"bring":["anything he should carry or have ready — documents, the consent one-pager, a demo, a test call"],'
+      +'"win_condition":"what would make this visit a success — one concrete outcome",'
+      +'"find_out":["information missing from the record that he should collect while there"]}'
+      +'\n\nDOSSIER:\n'+JSON.stringify(clinicDossier(c))}],{temp:0.3,prefer:'gemini-2.5-flash'});
+    c.brief={at:nowStamp(),out};save();
+    renderBrief(id);
+  }catch(e){alert('Could not prepare: '+e.message);closeModal();}
+}
+function renderBrief(id){
+  const c=S.clinics.find(x=>x.id===id);const o=(c.brief||{}).out||{};
+  const li=(arr)=>(arr||[]).map(x=>'<div class="m" style="margin:3px 0">• '+esc(x)+'</div>').join('');
+  $('modal').innerHTML='<h3>Before you walk in — '+esc(c.name)+'</h3>'
+    +(o.headline?'<div style="font-family:Newsreader,serif;font-size:17px;line-height:1.45;margin-bottom:10px">'+esc(o.headline)+'</div>':'')
+    +'<div class="card" style="margin-bottom:8px"><b style="font-size:13px">Have in your head</b>'+li(o.remember)+'</div>'
+    +(o.open_with?'<div class="hl good"><i class="dot"></i><div><b>Open with:</b> '+esc(o.open_with)+'</div></div>':'')
+    +'<div class="card" style="margin:8px 0"><b style="font-size:13px">Ask</b>'+li(o.ask)+'</div>'
+    +(o.objection_ready&&o.objection_ready.likely?'<div class="hl warn"><i class="dot"></i><div><b>If they say:</b> “'+esc(o.objection_ready.likely)+'”<br><b>Answer:</b> '+esc(o.objection_ready.answer||'')+'</div></div>':'')
+    +((o.bring||[]).length?'<div class="card" style="margin:8px 0"><b style="font-size:13px">Carry</b>'+li(o.bring)+'</div>':'')
+    +(o.win_condition?'<div class="hl info"><i class="dot"></i><div><b>Win condition:</b> '+esc(o.win_condition)+'</div></div>':'')
+    +((o.find_out||[]).length?'<div class="card" style="margin:8px 0"><b style="font-size:13px">Find out while you’re there</b>'+li(o.find_out)+'</div>':'')
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Close</button><button class="btn sec" onclick="preVisit(\''+id+'\')">Refresh</button><button class="btn" onclick="closeModal();openConv(\'clinic\',\''+id+'\')">Log the visit →</button></div>';
+  $('overlay').classList.add('open');
+}
+
+/* ---------- DEBRIEF: what you forgot to ask ---------- */
+async function debrief(kind,id){
+  const obj=kind==='clinic'?S.clinics.find(c=>c.id===id):S.people.find(p=>p.id===id);
+  if(!obj||!S.meta.aiKey)return;
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF
+      +'\n\nVinay just logged this conversation. Point out what he did NOT find out — the questions that would most change his next move, given his stage and this clinic’s state. '
+      +'Be blunt and specific; no praise, no summary. Max 3 gaps. If he covered things well, say so in one line and return an empty list.\n'
+      +'Return ONLY JSON: {"verdict":"one line","gaps":[{"missed":"what he did not ask or record","why":"why it matters now"}]}'
+      +'\n\nCONTEXT:\n'+JSON.stringify(kind==='clinic'?clinicDossier(obj):{person:obj.name,role:obj.role,conversations:(obj.calls||[]).slice(-4)})}],
+      {temp:0.35,prefer:'gemini-2.5-flash'});
+    if(!out||!out.verdict)return;
+    obj.debrief={at:nowStamp(),out};save();
+    $('modal').innerHTML='<h3>What you didn’t ask</h3>'
+      +'<div style="font-family:Newsreader,serif;font-size:16px;line-height:1.45;margin-bottom:10px">'+esc(out.verdict)+'</div>'
+      +(out.gaps||[]).map((g,i)=>'<div class="item" style="box-shadow:none;margin-bottom:8px"><div class="irow"><div>'
+        +'<div class="t" style="font-size:13.5px">'+esc(g.missed)+'</div><div class="m">'+esc(g.why||'')+'</div></div>'
+        +'<div class="acts"><button onclick="gapToFU(\''+kind+'\',\''+id+'\','+i+')">→ Follow-up</button></div></div></div>').join('')
+      +'<div class="mbtns"><button class="btn" onclick="closeModal()">Got it</button></div>';
+    $('overlay').classList.add('open');
+  }catch(e){}
+}
+function gapToFU(kind,id,i){
+  const obj=kind==='clinic'?S.clinics.find(c=>c.id===id):S.people.find(p=>p.id===id);
+  if(!obj)return;
+  const g=(((obj.debrief||{}).out||{}).gaps||[])[i];if(!g)return;
+  const who=kind==='clinic'?((obj.doctors&&obj.doctors[0])||obj.name):obj.name;
+  const d=new Date();d.setDate(d.getDate()+3);
+  S.followups.push({id:uid(),text:'Ask: '+g.missed,who,due:d.toISOString().slice(0,10),time:'',repeat:'none',done:false,created:todayISO(),ts:nowStamp()});
+  save();render();toast('Follow-up created ✓');
+}
+
+/* ---------- SEGMENTATION: how a doctor should be approached ---------- */
+const SEG={
+  power:{label:'Buying power',opts:['Owner-operator','Partner / co-owner','Employed doctor','Corporate / chain'],
+    why:'Only owners and partners can say yes.'},
+  aware:{label:'Problem awareness',opts:['Unaware','Curious','Aware','Burned before'],
+    why:'Unaware needs the audit as a mirror. Aware needs proof of accuracy. Burned needs a guarantee.'},
+  driver:{label:'What they would buy',opts:['Patient memory & history','Front-desk visibility','Lead conversion / ad ROI','Trust when away'],
+    why:'Same product, four pitches.'},
+  ticket:{label:'Ticket size',opts:['High-ticket (implants, cataract, aesthetics)','Mixed','Low-ticket (consults)'],
+    why:'Decides the ROI line: one recovered patient pays for a year, or you need volume.'},
+  leverage:{label:'Network leverage',opts:['Association office-bearer','Well-networked','Solo practitioner'],
+    why:'Multiplies the value of the same visit.'},
+  desk:{label:'Front desk',opts:['Dedicated front desk','Multi-role staff','Doctor answers calls'],
+    why:'Decides whether DeskLens reads as help or as surveillance.'},
+  tech:{label:'Tech posture',opts:['Already pays for software','Open to tech','Paper-first'],
+    why:'Budget exists, or education needed first.'}
+};
+const SEG_KEYS=Object.keys(SEG);
+function segPills(p){
+  const out=SEG_KEYS.filter(k=>p[k]).map(k=>'<span class="pill '+(k==='power'&&/Owner|Partner/.test(p[k])?'green':k==='aware'&&p[k]==='Burned before'?'red':k==='driver'?'violet':'grey')+'">'+esc(p[k])+'</span>');
+  return out.length?'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">'+out.join('')+'</div>':'';
+}
+function editSegC(clinicId,contactId){
+  const c=S.clinics.find(x=>x.id===clinicId);const ct=c&&contacts(c).find(x=>x.id===contactId);
+  if(!ct)return;
+  $('modal').innerHTML='<h3>How to approach '+esc(ct.name)+'</h3>'
+    +'<div class="note" style="margin-bottom:8px">Decides who you visit first and what you open with. Leave blank if unknown.</div>'
+    +SEG_KEYS.map(k=>'<div class="f"><label>'+esc(SEG[k].label)+' <span class="subtle">— '+esc(SEG[k].why)+'</span></label>'
+      +'<div class="chips" data-seg="'+k+'">'+SEG[k].opts.map(o=>'<button type="button" class="'+(ct[k]===o?'on':'')+'" onclick="segPick(this)">'+esc(o)+'</button>').join('')
+      +(ct[k]?'<button type="button" style="color:var(--muted)" onclick="segClear(this)">clear</button>':'')+'</div></div>').join('')
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Cancel</button>'
+    +(S.meta.aiKey?'<button class="btn sec" onclick="suggestSegC(\''+clinicId+'\',\''+contactId+'\')">✦ Suggest</button>':'')
+    +'<button class="btn" onclick="saveSegC(\''+clinicId+'\',\''+contactId+'\')">Save</button></div>';
+  $('overlay').classList.add('open');
+}
+function saveSegC(clinicId,contactId){
+  const c=S.clinics.find(x=>x.id===clinicId);const ct=contacts(c).find(x=>x.id===contactId);if(!ct)return;
+  document.querySelectorAll('[data-seg]').forEach(box=>{const on=box.querySelector('button.on');ct[box.getAttribute('data-seg')]=on?on.textContent:'';});
+  save();closeModal();render();toast('Approach saved ✓');
+}
+async function suggestSegC(clinicId,contactId){
+  const c=S.clinics.find(x=>x.id===clinicId);const ct=contacts(c).find(x=>x.id===contactId);if(!ct)return;
+  const convs=(c.calls||[]).slice(-8).map(v=>({with:v.with||'',said:cut(v.summary,240),points:(v.points||[]).slice(0,4),objections:v.objections||[],pricing:v.pricing||[]}));
+  if(!convs.length){toast('Log a conversation first');return;}
+  toast('Reading what they said…');
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF+'\n\nClassify this clinic contact for how to approach them, using ONLY what was said. Leave a field empty rather than guessing. Return ONLY JSON:\n'
+      +SEG_KEYS.map(k=>'"'+k+'": one of ['+SEG[k].opts.join(' | ')+'] or ""').join(',\n')
+      +',\n"reasoning":"one line per filled field, quoting them"'
+      +'\n\nCONTACT: '+JSON.stringify({name:ct.name,role:ct.role,specialty:ct.specialty||'',notes:cut(ct.notes,200)})
+      +'\nCLINIC: '+JSON.stringify({name:c.name,specialty:c.specialty,stage:c.stage,reviews:c.reviews,notes:cut(c.notes,160)})
+      +'\nCONVERSATIONS: '+JSON.stringify(convs)}],{temp:0.2,prefer:'gemini-2.5-flash'});
+    SEG_KEYS.forEach(k=>{if(!out[k])return;const box=document.querySelector('[data-seg="'+k+'"]');if(!box)return;
+      const b=[...box.querySelectorAll('button')].find(x=>x.textContent===out[k]);
+      if(b){[...box.querySelectorAll('button')].forEach(y=>y.classList.remove('on'));b.classList.add('on');}});
+    if(out.reasoning){const n=document.createElement('div');n.className='hl info';
+      n.innerHTML='<i class="dot"></i><div><b>Why:</b> '+esc(out.reasoning)+'<br><span class="subtle">Suggested — adjust and save.</span></div>';
+      $('modal').insertBefore(n,$('modal').querySelector('.f'));}
+    toast('Suggested — check and save');
+  }catch(e){alert('Could not suggest: '+e.message);}
+}
+function editSeg(id){
+  const p=S.people.find(x=>x.id===id);if(!p)return;
+  $('modal').innerHTML='<h3>How to approach '+esc(p.name)+'</h3>'
+    +'<div class="note" style="margin-bottom:8px">These decide who you visit first and what you say. Leave anything blank if you don’t know yet.</div>'
+    +SEG_KEYS.map(k=>'<div class="f"><label>'+esc(SEG[k].label)+' <span class="subtle">— '+esc(SEG[k].why)+'</span></label>'
+      +'<div class="chips" data-seg="'+k+'">'+SEG[k].opts.map(o=>'<button type="button" class="'+(p[k]===o?'on':'')+'" onclick="segPick(this)">'+esc(o)+'</button>').join('')
+      +(p[k]?'<button type="button" style="color:var(--muted)" onclick="segClear(this)">clear</button>':'')+'</div></div>').join('')
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal()">Cancel</button>'
+    +(S.meta.aiKey?'<button class="btn sec" onclick="suggestSeg(\''+id+'\')">✦ Suggest from conversations</button>':'')
+    +'<button class="btn" onclick="saveSeg(\''+id+'\')">Save</button></div>';
+  $('overlay').classList.add('open');
+}
+function segPick(btn){const box=btn.closest('.chips');[...box.querySelectorAll('button')].forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
+function segClear(btn){const box=btn.closest('.chips');[...box.querySelectorAll('button')].forEach(b=>b.classList.remove('on'));}
+function saveSeg(id){
+  const p=S.people.find(x=>x.id===id);if(!p)return;
+  document.querySelectorAll('[data-seg]').forEach(box=>{
+    const on=box.querySelector('button.on');
+    p[box.getAttribute('data-seg')]=on?on.textContent:'';
+  });
+  save();closeModal();render();toast('Approach saved ✓');
+}
+async function suggestSeg(id){
+  const p=S.people.find(x=>x.id===id);if(!p)return;
+  const clinics=S.clinics.filter(c=>(c.doctors||[]).some(d=>nameEq(d,p.name))||c.name===p.clinic);
+  const convs=[...(p.calls||[]),...[].concat(...clinics.map(c=>c.calls||[]))].slice(-8)
+    .map(v=>({said:cut(v.summary,260),points:(v.points||[]).slice(0,4),objections:v.objections||[],pricing:v.pricing||[],tags:v.tags||[]}));
+  if(!convs.length){toast('Log a conversation first — nothing to read yet');return;}
+  toast('Reading what they said…');
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF+'\n\nClassify this doctor/contact for how Vinay should approach them, using ONLY what they actually said. '
+      +'Leave a field empty rather than guessing. Return ONLY JSON with these keys and exact allowed values:\n'
+      +SEG_KEYS.map(k=>'"'+k+'": one of ['+SEG[k].opts.join(' | ')+'] or ""').join(',\n')
+      +',\n"reasoning":"one line per field you filled, quoting their words"'
+      +'\n\nCONTACT: '+JSON.stringify({name:p.name,role:p.role,specialty:p.specialty,clinic:p.clinic,influence:p.influence,notes:cut(p.notes,200)})
+      +'\nCLINICS: '+JSON.stringify(clinics.map(c=>({name:c.name,specialty:c.specialty,stage:c.stage,reviews:c.reviews,receptionist:c.whoAnswers,notes:cut(c.notes,160)})))
+      +'\nWHAT THEY SAID: '+JSON.stringify(convs)}],{temp:0.2,prefer:'gemini-2.5-flash'});
+    SEG_KEYS.forEach(k=>{
+      if(!out[k])return;
+      const box=document.querySelector('[data-seg="'+k+'"]');if(!box)return;
+      const btn=[...box.querySelectorAll('button')].find(b=>b.textContent===out[k]);
+      if(btn){[...box.querySelectorAll('button')].forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
+    });
+    if(out.reasoning){
+      const note=document.createElement('div');note.className='hl info';
+      note.innerHTML='<i class="dot"></i><div><b>Why:</b> '+esc(out.reasoning)+'<br><span class="subtle">Suggested — change anything, then Save.</span></div>';
+      $('modal').insertBefore(note,$('modal').querySelector('.f'));
+    }
+    toast('Suggested — check and save');
+  }catch(e){alert('Could not suggest: '+e.message);}
+}
+
 /* ---------- THE BRAIN: everything in the app, shaped for analysis ---------- */
 const cut=(s,n)=>String(s||'').slice(0,n);
 function brainContext(){
@@ -2521,11 +3077,18 @@ function brainContext(){
   allConvs().forEach(x=>(x.v.tags||[]).forEach(t=>tagCount[t]=(tagCount[t]||0)+1));
   return {
     today:todayISO(),
+    pilot:(function(){const p=S.meta.pilot||{};const c=pilotClinic();
+      return {goLive:p.date||'',daysAway:p.date?daysTo(p.date):null,clinic:c?c.name:'',
+        readyCount:pilotChecks().filter(x=>x.done).length,total:pilotChecks().length,
+        blocking:pilotChecks().filter(x=>!x.done).map(x=>x.label)};})(),
     business:{targetClinics:400,acv:'₹6,000/month (₹72,000/yr)',gate:{live,paying,next:live<3?3:live<8?8:live<15?15:400},
       stabilisationEnds:'2026-11-13',motion:'free 7-day call audit',moat:'tier-2/3 field distribution network'},
     clinics:S.clinics.slice(0,60).map(c=>({
       name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,source:c.source||'',
-      doctors:c.doctors||[],receptionist:c.whoAnswers||'',reviews:c.reviews||'',
+      contacts:(c.contacts||[]).map(x=>({name:x.name,role:x.role,influence:x.influence||'',buyingPower:x.power||'',awareness:x.aware||'',valueDriver:x.driver||''})),
+      reviews:c.reviews||'',broughtBy:c.broughtBy||'',
+      softwareTheyPayFor:(c.systems||[]).map(s=>s.name+' ('+s.cat+(s.feel?', '+s.feel:'')+(s.cost?', '+s.cost:'')+')'),
+      whoHasTheirEar:(c.orbit||[]).map(o=>o.name+' — '+o.who+', comes '+String(o.freq).toLowerCase()+(o.close?', '+o.close:'')+(o.intro==='yes'?', can introduce':'')),
       handsetBrand:c.brand||'unknown',recordingCapable:brandClass(c.brand),recordingTested:c.handset,
       visits:(c.visits||[]).length,lastVisitDaysAgo:lastVisit(c)?daysAgo(lastVisit(c)):null,
       stageHistory:(c.stageHistory||[]).map(s=>s.stage+'@'+s.date),
@@ -2534,6 +3097,7 @@ function brainContext(){
         points:(v.points||[]).slice(0,4),objections:v.objections||[],pricing:v.pricing||[],nextStep:v.nextStep||''}))
     })),
     people:S.people.slice(0,60).map(p=>({name:p.name,role:p.role,specialty:p.specialty||'',clinic:p.clinic||'',
+      broughtClinics:S.clinics.filter(c=>nameEq(c.broughtBy,p.name)).map(c=>c.name),
       city:p.city||'',influence:p.influence||'',relationship:p.rel||'',source:p.source||'',notes:cut(p.notes,160),
       conversations:(p.calls||[]).slice(-3).map(v=>({daysAgo:daysAgo(v.date),tags:v.tags||[],said:cut(v.summary,200),objections:v.objections||[],pricing:v.pricing||[]}))})),
     followupsOpen:allFU().map(x=>({text:cut(x.f.text,120),who:x.f.who,due:x.f.due,overdueDays:x.f.due?Math.max(0,-daysTo(x.f.due)):0,space:x.sp})),
@@ -2555,7 +3119,7 @@ const BRAIN_BRIEF='You are chief of staff and analyst to Vinay, founder-CEO of D
   +'Model: ₹6,000/month per clinic, target 400 clinics in ~24 months, gated rollout 3→8→15 clinics with founder-direct selling only until clinic 15. '
   +'The moat is his physical field distribution network, not the technology. Sales motion is a free 7-day call audit that produces proof from the clinic\'s own calls. '
   +'A clinic can only be served if its phone supports OS-level recording (Samsung/OnePlus/Oppo/Vivo/Realme/Redmi record everything; Motorola/Pixel only unknown-number incoming calls; iPhone/stock Android cannot). '
-  +'His time is the scarcest resource; physical visits are its highest-value use. Below is the complete state of his command centre — clinics, people, conversations, promises, tasks, decisions and open questions. '
+  +'His time is the scarcest resource; physical visits are its highest-value use. IMPORTANT: he knows his own product, price, strategy and gates — never restate them back to him, never explain DeskLens, never pad with context he supplied. Say only what he does not already know: what the data shows, what it implies, what to do. Be terse and specific. Below is the complete state of his command centre — clinics, people, conversations, promises, tasks, decisions and open questions. '
   +'Reason from this data only. Never invent a clinic, person, number or quote. If the evidence is thin, say so.';
 
 /* ---------- ASK YOUR DATA ---------- */
@@ -2683,9 +3247,15 @@ const PRESETS=[
   {n:'Cannot record — needs new phone',b:'clinics',f:{brandClass:'none'}},
   {n:'Handset unknown at active clinics',b:'clinics',f:{brand:'—none—',activeOnly:'yes'}},
   {n:'Recording test not done',b:'clinics',f:{handset:'unverified'}},
+  {n:'Already paying for software',b:'clinics',f:{}},
+  {n:'Has someone who can introduce me',b:'clinics',f:{hasIntro:'yes'}},
   {n:'High-value leads (100+ reviews)',b:'clinics',f:{minRev:'100'}},
   {n:'Not visited in 14+ days',b:'clinics',f:{staleDays:'14'}},
   {n:'Never visited',b:'clinics',f:{staleDays:'never'}},
+  {n:'Decision-makers (owners & partners)',b:'people',f:{power:'Owner-operator'}},
+  {n:'Aware of the problem',b:'people',f:{aware:'Aware'}},
+  {n:'Ad-spend / lead ROI pitch',b:'people',f:{driver:'Lead conversion / ad ROI'}},
+  {n:'High-ticket economics',b:'people',f:{ticket:'High-ticket (implants, cataract, aesthetics)'}},
   {n:'High-influence people',b:'people',f:{influence:'High — can open doors'}},
   {n:'Champions & strong relationships',b:'people',f:{rel:'Champion'}},
   {n:'Feature requests from the field',b:'convs',f:{tag:'Feature request'}},
@@ -2708,6 +3278,8 @@ function repRows(){
       if(f.brandClass&&brandClass(c.brand)!==f.brandClass)return false;
       if(f.handset&&c.handset!==f.handset)return false;
       if(f.minRev&&!(parseInt(c.reviews||0)>=parseInt(f.minRev)))return false;
+      if(f.usesSoftware&&!(c.systems||[]).some(s=>s.name===f.usesSoftware))return false;
+      if(f.hasIntro==='yes'&&!(c.orbit||[]).some(o=>o.intro==='yes'))return false;
       if(f.staleDays){
         const lv=lastVisit(c);
         if(f.staleDays==='never'){if(lv)return false;}
@@ -2719,13 +3291,14 @@ function repRows(){
   if(rep.base==='people'){
     return S.people.filter(p=>{
       if(f.role&&p.role!==f.role)return false;
+      for(const k of SEG_KEYS){if(f[k]&&p[k]!==f[k])return false;}
       if(f.influence&&p.influence!==f.influence)return false;
       if(f.rel&&p.rel!==f.rel)return false;
       if(f.city&&p.city!==f.city)return false;
       if(f.specialty&&p.specialty!==f.specialty)return false;
       if(f.source&&p.source!==f.source)return false;
       return true;
-    }).map(p=>({id:p.id,type:'person',cols:[p.name,p.role,p.specialty||'—',p.clinic||'—',p.city||'—',p.phone||'—',p.influence||'—',p.rel||'—']}));
+    }).map(p=>({id:p.id,type:'person',cols:[p.name,p.role,p.specialty||'—',p.clinic||'—',p.power||'—',p.aware||'—',p.driver||'—',p.influence||'—',p.rel||'—']}));
   }
   if(rep.base==='followups'){
     return allFU().filter(x=>{
@@ -2760,7 +3333,7 @@ function repRows(){
   }).map(({t,sp})=>({id:t.id,type:'task',cols:[t.title,t.bucket,t.link||'—',sp,t.trigger||'—']}));
 }
 const REP_COLS={clinics:['Clinic','Stage','Specialty','City','Doctors','Brand','Recording','Reviews','Last visit'],
-  people:['Name','Role','Specialty','Clinic','City','Phone','Influence','Relationship'],
+  people:['Name','Role','Specialty','Clinic','Buying power','Awareness','Value driver','Influence','Relationship'],
   followups:['Follow-up','With','Due','Time','Space','Repeat'],
   convs:['Date','With','Tags','What was said','Next step'],
   tasks:['Task','Bucket','Linked to','Space','Trigger']};
@@ -2789,9 +3362,13 @@ function vReports(){
       +repSel('source','Source',optList('source'))
       +repSel('minRev','Min reviews',['50','100','200','500'])
       +repSel('staleDays','Not visited',['7','14','30','never'])
-      +repSel('activeOnly','Active only',['yes']);
+      +repSel('activeOnly','Active only',['yes'])
+      +repSel('usesSoftware','Uses software',[...new Set([].concat(...S.clinics.map(c=>(c.systems||[]).map(s=>s.name))))])
+      +repSel('hasIntro','Has an introducer',['yes']);
   }else if(rep.base==='people'){
-    h+=repSel('role','Role',optList('role'))
+    h+=repSel('power','Buying power',SEG.power.opts)+repSel('aware','Awareness',SEG.aware.opts)+repSel('driver','Value driver',SEG.driver.opts)
+      +repSel('ticket','Ticket size',SEG.ticket.opts)+repSel('leverage','Leverage',SEG.leverage.opts)+repSel('desk','Front desk',SEG.desk.opts)
+      +repSel('role','Role',optList('role'))
       +repSel('influence','Influence',optList('influence'))
       +repSel('rel','Relationship',optList('rel'))
       +repSel('specialty','Specialty',optList('specialty'))+repSel('city','City',optList('city'))+repSel('source','Source',optList('source'));
@@ -2890,16 +3467,21 @@ function vClinicDetail(){
     '<span class="pill">'+esc(c.stage)+'</span><span class="pill grey">'+esc(c.specialty)+'</span>'+hs+brandPill+(c.reviews?'<span class="pill grey">'+esc(String(c.reviews))+' reviews</span>':''),
     [c.city,c.phone?'☎ reception '+esc(c.phone):'',c.source].filter(Boolean).join(' · '));
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
-    +'<button class="btn sm" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
+    +'<button class="btn sm" onclick="preVisit(\''+c.id+'\')">✦ Prep for visit</button>'
+    +'<button class="btn sm sec" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
     +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log visit / call</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="editClinic(\''+c.id+'\')">Edit</button></div>';
-  h+='<h2>People here</h2>';
-  const rows=[];
-  (c.doctors||[]).forEach(d=>rows.push('<div class="item"><div class="t"><span class="pill" style="margin-right:6px">Doctor</span>'+nameLink(d)+'</div></div>'));
-  if(c.whoAnswers)rows.push('<div class="item"><div class="t"><span class="pill grey" style="margin-right:6px">Reception</span>'+nameLink(c.whoAnswers)+(c.whoAnswersPhone?' <span class="subtle">📱 '+esc(c.whoAnswersPhone)+'</span>':'')+'</div></div>');
-  S.people.filter(p=>p.clinic===c.name&&!(c.doctors||[]).some(d=>nameEq(d,p.name))&&!nameEq(p.name,c.whoAnswers)).forEach(p=>rows.push('<div class="item"><div class="t"><span class="pill grey" style="margin-right:6px">'+esc(p.role.split(' /')[0])+'</span>'+nameLink(p.name)+'</div></div>'));
+  h+='<h2>People here <span class="cnt">'+contacts(c).length+'</span><button class="btn sm sec" style="margin-left:auto" onclick="editContact(\''+c.id+'\')">+ Add</button></h2>';
+  const rows=contacts(c).map(ct=>'<div class="item"><div class="irow"><div>'
+    +'<div class="t">'+esc(ct.name)+(ct.phone?' <span class="subtle" style="font-weight:400">📱 '+esc(ct.phone)+'</span>':'')+'</div>'
+    +'<div class="m">'+contactPills(ct)+(ct.referrer?' <span class="pill green">refers others</span>':'')+'</div>'
+    +(ct.notes?'<div class="m">'+esc(ct.notes)+'</div>':'')
+    +(ct.referrer?(function(){const b=referralsBy(ct.name);return b.length?'<div class="m"><span class="pill green">brought '+b.length+'</span> '+b.map(x=>esc(x.name)).join(', ')+'</div>':'';})():'')
+    +'</div><div class="acts">'
+    +'<button onclick="editSegC(\''+c.id+'\',\''+ct.id+'\')">Approach</button>'
+    +'<button onclick="editContact(\''+c.id+'\',\''+ct.id+'\')">Edit</button></div></div></div>');
   h+=rows.join('')||'<div class="empty">No people linked yet.</div>';
   const fus=openFU().filter(f=>(c.doctors||[]).some(d=>nameEq(d,f.who))||nameEq(f.who,c.whoAnswers));
   h+='<h2>Follow-ups <span class="cnt">'+fus.length+'</span></h2>';
@@ -2907,6 +3489,8 @@ function vClinicDetail(){
   const ts=S.sequence.filter(t=>!t.done&&(t.link===c.name||(c.doctors||[]).some(d=>nameEq(d,t.link))));
   h+='<h2>Tasks <span class="cnt">'+ts.length+'</span></h2>';
   h+=ts.map(seqItem).join('')||'<div class="empty">None open.</div>';
+  h+=systemsHTML(c);
+  h+=orbitHTML(c);
   h+='<h2>History <span class="cnt">'+trailFor('clinic',c).length+'</span></h2>';
   h+=relAnalysis('clinic',c);
   h+='<div class="card">'+trailHTML('clinic',c)+'</div>';
@@ -2927,7 +3511,11 @@ function vPersonDetail(){
     +'<button class="btn sm" onclick="addFUfor(\''+p.id+'\',\'person\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="openConv(\'person\',\''+p.id+'\')">🎧 Log visit / call</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+p.id+'\',\'person\')">+ Task</button>'
+    +'<button class="btn sm sec" onclick="editSeg(\''+p.id+'\')">✦ Approach</button>'
     +'<button class="btn sm sec" onclick="editPerson(\''+p.id+'\')">Edit</button></div>';
+  h+=(SEG_KEYS.some(k=>p[k])?'<div class="card" style="margin-bottom:12px"><b style="font-size:13px">How to approach</b>'
+      +SEG_KEYS.filter(k=>p[k]).map(k=>'<div class="m" style="margin-top:4px"><span class="subtle">'+esc(SEG[k].label)+':</span> <b>'+esc(p[k])+'</b></div>').join('')+'</div>'
+    :'<div class="card" style="margin-bottom:12px"><div class="m" style="margin:0">Not yet classified — <a href="#" onclick="editSeg(\''+p.id+'\');return false">set how to approach them</a>'+(S.meta.aiKey?' or let AI suggest it from your conversations':'')+'.</div></div>');
   h+='<h2>Clinics</h2>';
   h+=[...clinicSet].map(n=>'<div class="item"><div class="t">'+nameLink(n)+'</div></div>').join('')||'<div class="empty">Not linked to a clinic yet.</div>';
   const fus=openFU().filter(f=>nameEq(f.who,p.name));
@@ -3598,12 +4186,14 @@ function editClinic(id){
     {key:'city',label:'City',type:'select',kind:'city',value:c.city},
     {key:'stage',label:'Stage',type:'select',kind:'stage',value:c.stage},
     {key:'source',label:'How this clinic came to you',type:'select',kind:'source',allowBlank:true,value:c.source||''},
+    {key:'broughtBy',label:'Who introduced you',type:'select',options:['',...referrerNames()],value:c.broughtBy||''},
     {key:'phone',label:'Clinic reception number (the line patients call)',type:'tel',value:c.phone||''},
     {key:'reviews',label:'Google review count (call-volume proxy)',type:'number',value:String(c.reviews||'')},
     {key:'whoAnswers',label:'Receptionist — who answers the phone',value:c.whoAnswers||''},
     {key:'whoAnswersPhone',label:'Receptionist’s mobile',type:'tel',value:c.whoAnswersPhone||''},
     {key:'brand',label:'Clinic handset brand (determines recording capability)',type:'select',kind:'brand',allowBlank:true,value:c.brand},
     {key:'handset',label:'Handset recording check (test call done?)',type:'select',options:['unverified','ok','fail'],value:c.handset},
+    {key:'consent',label:'DPDP consent (Doc #1)',type:'select',options:['not started','sent','signed'],value:c.consent||'not started'},
     {key:'notes',label:'Notes (objections, promises\u2026)',type:'textarea',value:c.notes}
   ],v=>{
     if(!v.name)return;
@@ -3640,7 +4230,7 @@ function editPerson(id){
   openModal(id?'Edit person':'Add person',[
     {key:'name',label:'Name (only thing you must type)',value:p.name},
     {key:'phone',label:'Personal mobile (optional)',type:'tel',value:p.phone||''},
-    {key:'role',label:'Role',type:'select',kind:'role',value:p.role},
+    {key:'role',label:'Role in your network',type:'select',options:NETWORK_ROLES.includes(p.role)?NETWORK_ROLES:[p.role,...NETWORK_ROLES],value:p.role},
     {key:'specialty',label:'Specialty (if doctor)',type:'select',kind:'specialty',allowBlank:true,value:p.specialty||''},
     {key:'clinic',label:'Linked clinic',type:'select',onchange:'pullFromClinic(this)',options:clinicOpts.includes(p.clinic)?clinicOpts:[p.clinic||'— none —',...clinicOpts.filter(c=>c!=='— none —')],value:p.clinic||'— none —'},
     {key:'city',label:'City',type:'select',kind:'city',value:p.city||'Kalaburagi'},
@@ -3747,6 +4337,7 @@ function doRestore(inp){
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 backfillTags();
 if(S.meta.repairedAt!=='11.3'){try{repairData(true);S.meta.repairedAt='11.3';}catch(e){}}
+try{const mv=migrateToAccounts();if(mv)setTimeout(()=>toast(mv+' clinic contacts moved into their clinics'),1200);}catch(e){}
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 applyDensity();
 applyNavStyle();
@@ -3755,7 +4346,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='11.3';
+const APP_VERSION='12.5';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
