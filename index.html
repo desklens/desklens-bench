@@ -293,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.5</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.6</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -314,7 +314,7 @@ const LS_KEY='dlhq_v1';
 const todayISO=()=>new Date().toISOString().slice(0,10);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const $=id=>document.getElementById(id);
-const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc=s=>(s===null||s===undefined?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
 function fmtD(iso){if(!iso)return'';const d=new Date(iso+'T00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});}
 function fmtDs(iso){if(!iso)return'';const d=new Date(iso+'T00:00');return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});}
@@ -4346,7 +4346,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='12.5';
+const APP_VERSION='12.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
