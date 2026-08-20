@@ -295,7 +295,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v13.0</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v13.1</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -312,10 +312,11 @@ a{color:var(--teal)}
 <script>
 'use strict';
 /* ================= CORE ================= */
-const APP_VERSION='13.0';
+const APP_VERSION='13.1';
 /* CHANGELOG — single source of truth for the project bible. Claude appends one entry per version.
    Format: {v, date, what[]}  — newest first. Do not reformat; the bible sync reads this block. */
 const CHANGELOG=[
+ {v:'13.1',date:'2026-08-20',what:['Source tracking went quiet — "source not recorded" is gone and ordinary facts show nothing at all','The only fact that warns is the handset: if you heard the brand rather than tested it, the clinic says so until a test call settles it','You are only asked how you know something when the entry actually mentions the handset']},
  {v:'13.0',date:'2026-08-20',what:['One Log window instead of two — the AI decides whether you spoke to them or just learned it, you correct it with one tap','Generated clinic profile: who they are, state of play, real blocker, open loops, what changed, what you still do not know, and the next move — derived from every log, nothing typed','Profile is cached and free to read; it tells you how many new logs have landed since it was written and you choose when to refresh','Every claim in the profile can be traced back to the log it came from']},
  {v:'12.9',date:'2026-08-20',what:['Separated what you LEARN from who you SPOKE to — "What I know" records an observation without it counting as contact, so cadence and going-cold stay honest','Every fact on a clinic now carries how you know it and when — verified, second-hand, or a guess','Facts that are second-hand and older than 60 days are flagged "worth confirming before you pitch"']},
  {v:'12.8',date:'2026-08-20',what:['Sync now MERGES instead of overwriting — a device can no longer wipe records it has never seen (this was the cause of the lost clinic)','Restore points: a full copy of this device kept on opening, every hour, on closing, and before any migration — 15 kept, never touched by sync','Nothing is deleted any more — deleted items move to Data → Recover and can be put back','Data → Recover shows record counts so a drop is visible immediately','Fixed a timezone bug: anything entered before 5:30am was being dated to the previous day','One conversation is now ONE entry on the trail — the visit, tasks and promises it created are listed inside it instead of repeating the same text four times']},
@@ -2431,30 +2432,33 @@ function stampProv(c,k,src,date){
   c.prov=c.prov||{};
   c.prov[k]={src:src||'Not recorded',at:date||todayISO(),ts:nowStamp()};
 }
+/* Source is recorded quietly on everything, but only ever SHOWN where being wrong costs a pilot.
+   A warning that fires on every field is a warning nobody reads. */
+const GATE_FACTS=['brand','handset'];
 function provNote(c,k){
+  if(GATE_FACTS.indexOf(k)<0)return '';           // silent for ordinary facts
   const p=provOf(c,k);
-  if(!p)return '<span class="subtle" style="font-size:11px">· source not recorded</span>';
-  const age=daysAgo(normDate(p.at));
-  const soft=HARD_SRC.indexOf(p.src)<0;
-  const stale=age>FACT_STALE_DAYS;
-  const warn=(soft&&stale)||p.src==='I am assuming this';
-  return '<span class="subtle" style="font-size:11px">· '+esc(p.src)+' · '+esc(fmtDs(p.at))+'</span>'
-    +(warn?' <span class="pill amber" style="font-size:10px">verify</span>':'');
+  if(!p)return '';
+  if(HARD_SRC.indexOf(p.src)>=0)
+    return '<span class="subtle" style="font-size:11px">· you verified this · '+esc(fmtDs(p.at))+'</span>';
+  return '<span class="subtle" style="font-size:11px">· '+esc(p.src.toLowerCase())+'</span>'
+    +' <span class="pill amber" style="font-size:10px">run a test call</span>';
 }
 /* facts worth re-checking before a pitch */
 /* only the facts that actually gate a pilot are chased when their source is unknown —
    city and specialty do not need a provenance trail */
 const CRITICAL_FACTS=['brand','handset','whoAnswers','phone'];
+/* Only the recording gate is chased. Everything else you can re-check in ten seconds,
+   and being wrong about it costs nothing. */
 function softFacts(c){
   const out=[];
-  Object.keys(FACT_LABELS).forEach(k=>{
-    if(!String(c[k]||'').trim())return;
-    const p=provOf(c,k);
-    if(!p){if(CRITICAL_FACTS.indexOf(k)>=0)out.push({k,label:FACT_LABELS[k],why:'source never recorded'});return;}
-    if(p.src==='I am assuming this'){out.push({k,label:FACT_LABELS[k],why:'you were guessing'});return;}
-    if(HARD_SRC.indexOf(p.src)<0&&daysAgo(normDate(p.at))>FACT_STALE_DAYS)
-      out.push({k,label:FACT_LABELS[k],why:'second-hand, '+daysAgo(normDate(p.at))+' days old'});
-  });
+  const brand=String(c.brand||'').trim();
+  if(brand&&PARTIAL_BRANDS.indexOf(brand)<0&&BAD_BRANDS.indexOf(brand)<0){
+    const p=provOf(c,'brand');
+    const tested=/^(ok|fail)$/i.test(String(c.handset||''));
+    if(!tested&&(!p||HARD_SRC.indexOf(p.src)<0))
+      out.push({k:'brand',label:'Handset',why:p?('you heard it from '+p.src.toLowerCase().replace(/^i /,'')):'not verified yet'});
+  }
   return out;
 }
 
@@ -2717,8 +2721,10 @@ function renderConvReview(){
       +' <input type="time" id="cvvtime" value="'+esc(o.visitTime||'')+'" style="width:110px;padding:6px;font-size:13px;border:1.5px solid var(--line);border-radius:9px"></label>'
       +'<div class="note">Counts as contact — this is what drives cadence and the going-cold warnings.</div></div>'
     +'<div id="cvlearnbox" style="margin-top:9px;display:none">'
-      +'<label style="font-size:12.5px;display:block;margin-bottom:4px" class="subtle">How do you know this?</label>'
-      +'<select id="cvsrc" style="width:100%">'+KNOW_SRC.map(s=>'<option>'+esc(s)+'</option>').join('')+'</select>'
+      +(facts.some(f=>GATE_FACTS.indexOf(f.k)>=0)
+         ?'<label style="font-size:12.5px;display:block;margin-bottom:4px" class="subtle">You mentioned the handset — how do you know?</label>'
+          +'<select id="cvsrc" style="width:100%">'+KNOW_SRC.map(s=>'<option>'+esc(s)+'</option>').join('')+'</select>'
+         :'<input type="hidden" id="cvsrc" value="Learned second-hand">')
       +'<div class="note">Saved to the record and the trail, but <b>not</b> counted as contact.</div></div>'
     +'</div>';
   if(o.tasks&&o.tasks.length){
@@ -2812,7 +2818,7 @@ function convSave(){
         if(!contacts(obj).some(x=>nameEq(x.name,f.to))){obj.contacts.push({id:uid(),name:f.to,role:'Doctor',phone:''});facts++;}
         if(!(obj.doctors||[]).some(d=>nameEq(d,f.to)))obj.doctors=[...(obj.doctors||[]),f.to];
       }else{
-        obj[f.k]=f.to;stampProv(obj,f.k,'The doctor told me',conv.date);facts++;
+        obj[f.k]=f.to;stampProv(obj,f.k,'From a conversation',conv.date);facts++;
         if(f.k==='whoAnswers'){
           obj.contacts=obj.contacts||[];
           if(!contacts(obj).some(x=>nameEq(x.name,f.to)))obj.contacts.push({id:uid(),name:f.to,role:'Receptionist',phone:obj.whoAnswersPhone||''});
@@ -4016,8 +4022,8 @@ function knowHTML(c){
       +'<span style="flex:1;font-size:13.5px"><b>'+esc(c[k])+'</b><br>'+provNote(c,k)+'</span></div>';
   });
   h+='</div>';
-  if(soft.length)h+='<div class="hl warn"><i class="dot"></i><div><b>Worth confirming before you pitch:</b> '
-    +soft.map(f=>esc(f.label)+' <span class="subtle">('+esc(f.why)+')</span>').join(' · ')+'</div></div>';
+  if(soft.length)h+='<div class="hl warn"><i class="dot"></i><div><b>Before the pilot:</b> the handset has not been proven — '
+    +esc(soft[0].why)+'. One test call settles it.</div></div>';
   const ln=(c.learned||[]).length;
   if(ln)h+='<div class="note" style="margin-top:6px">'+ln+' observation'+(ln>1?'s':'')+' on the trail below — these do not count as contact.</div>';
   return h;
