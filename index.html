@@ -293,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.6</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.7</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -310,6 +310,26 @@ a{color:var(--teal)}
 <script>
 'use strict';
 /* ================= CORE ================= */
+const APP_VERSION='12.7';
+/* CHANGELOG — single source of truth for the project bible. Claude appends one entry per version.
+   Format: {v, date, what[]}  — newest first. Do not reformat; the bible sync reads this block. */
+const CHANGELOG=[
+ {v:'12.7',date:'2026-08-20',what:['Clinic staff no longer leak into People — doctors and receptionists live inside their clinic as contacts','tidyPeople() runs on every load and after every conversation: folds stray clinic people back in, moves their conversations with them, strips "Name:" prefixes from voice-created records','Voice-created doctors attached to a clinic become clinic contacts, not network People']},
+ {v:'12.6',date:'2026-08-20',what:['Fixed Insights crash when a numeric value (review count, goal progress) reached the escaper']},
+ {v:'12.5',date:'2026-08-20',what:['Pilot countdown to 1 September 2026 on Today, with a 9-item pilot readiness checklist']},
+ {v:'12.4',date:'2026-08-19',what:['Conversation logs now write facts back into the clinic record — handset brand, phone, who answers, reviews, city, specialty, doctors','Software-in-use tracker per clinic and orbit tracker (who visits the doctor, how often, how close)']},
+ {v:'12.3',date:'2026-08-19',what:['Accounts model: clinic owns its contacts; People is network only (channel partners, associations, referring doctors, team, vendors)','A doctor who refers stays one record inside his clinic with referrer flag; clinics he introduces carry broughtBy attribution']},
+ {v:'12.2',date:'2026-08-19',what:['Seven-axis doctor segmentation (power, awareness, driver, ticket, leverage, desk, tech) with AI bucketing']},
+ {v:'12.1',date:'2026-08-19',what:['Ask HQ — query your own data in plain language, grounded only in what is in the app']},
+ {v:'12.0',date:'2026-08-19',what:['AI brain: every record feeds a structured brief so suggestions are grounded, never invented','Rules engine scores opportunities first; Gemini only sequences and explains what the engine found']},
+ {v:'11.5',date:'2026-08-18',what:['Pre-visit brief and post-visit debrief prompts per clinic']},
+ {v:'11.4',date:'2026-08-18',what:['Log Conversation — one window turns a call or visit into summary, points, objections, pricing, commitments, tasks, follow-ups and next step']},
+ {v:'11.3',date:'2026-08-18',what:['Data repair pass over all older records; timestamps on every entry; journey timeline ordered by minute']},
+ {v:'11.0',date:'2026-08-18',what:['Conversation tagging with backfill over existing records']},
+ {v:'10.0',date:'2026-08-18',what:['Gemini 2.5 Flash as the default engine with model fallback, 503 retry and honest failure messages']},
+ {v:'9.x',date:'2026-08-17',what:['Mobile rebuild: user-controlled density (Compact/Automatic/Roomy), nav style choice, measured bottom-bar spacing, card stacking fixes']},
+ {v:'8.1',date:'2026-08-17',what:['Main-server integration layer, built and switched off by default']}
+];
 const LS_KEY='dlhq_v1';
 const todayISO=()=>new Date().toISOString().slice(0,10);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -737,35 +757,54 @@ $('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeModal(
 /* ================= DOCTOR ↔ CLINIC SYNC ================= */
 function nameEq(a,b){return !!a&&!!b&&a.trim().toLowerCase().replace(/^dr\.?\s*/,'')===b.trim().toLowerCase().replace(/^dr\.?\s*/,'');}
 function linkClinicDoctor(c){
+  /* doctors are contacts of the clinic — never People records */
   const created=[];
+  c.contacts=c.contacts||[];
   (c.doctors||[]).forEach(dname=>{
     if(!dname)return;
-    let p=S.people.find(x=>nameEq(x.name,dname));
-    if(!p){
-      p={id:uid(),name:dname,role:'Doctor',org:'',specialty:c.specialty||'',phone:'',city:c.city||'',clinic:c.name,source:c.source||'',influence:'',rel:'New',notes:'Auto-created from clinic '+c.name};
-      S.people.push(p);created.push(p.name);
-    }else{
-      // person exists — fill blanks on BOTH sides
-      if(!p.clinic)p.clinic=c.name;
-      if(!p.specialty&&c.specialty&&c.specialty!=='Other')p.specialty=c.specialty;
-      if(!p.city&&c.city)p.city=c.city;
-      if((!c.specialty||c.specialty==='Other')&&p.specialty)c.specialty=p.specialty;
-      if(!c.city&&p.city)c.city=p.city;
-      if(!c.source&&p.source)c.source=p.source;
+    if(!c.contacts.some(x=>nameEq(x.name,dname))){
+      c.contacts.push({id:uid(),name:dname,role:'Doctor',phone:'',specialty:c.specialty||''});
+      created.push(dname);
     }
   });
   return created.length?created.join(', '):null;
 }
 function linkClinicStaff(c){
   if(!c.whoAnswers)return;
-  let p=S.people.find(x=>nameEq(x.name,c.whoAnswers));
-  if(!p){
-    p={id:uid(),name:c.whoAnswers,role:'Receptionist / staff',org:'',specialty:'',phone:c.whoAnswersPhone||'',city:c.city||'',clinic:c.name,source:'',influence:'',rel:'New',notes:'Answers the phone at '+c.name};
-    S.people.push(p);
-  }else{
-    if(!p.clinic)p.clinic=c.name;
-    if(!p.phone&&c.whoAnswersPhone)p.phone=c.whoAnswersPhone;
-  }
+  c.contacts=c.contacts||[];
+  const ct=c.contacts.find(x=>nameEq(x.name,c.whoAnswers));
+  if(!ct)c.contacts.push({id:uid(),name:c.whoAnswers,role:'Receptionist',phone:c.whoAnswersPhone||''});
+  else if(!ct.phone&&c.whoAnswersPhone)ct.phone=c.whoAnswersPhone;
+}
+/* runs on every load: anyone clinical sitting in People gets folded into their clinic */
+function tidyPeople(){
+  let moved=0;
+  const keep=[];
+  S.people.forEach(p=>{
+    p.name=String(p.name||'').replace(/^\s*(name|naam)\s*[:\-]\s*/i,'').trim();   // strip stray "Name:" prefixes
+    const target=S.clinics.find(c=>c.name===p.clinic)
+      ||S.clinics.find(c=>(c.doctors||[]).some(d=>nameEq(d,p.name))||nameEq(c.whoAnswers,p.name)||contacts(c).some(x=>nameEq(x.name,p.name)));
+    const clinical=!NETWORK_ONLY(p.role)&&(!!target||/doctor|recept|front desk|staff|manager/i.test(p.role||''));
+    if(target&&clinical){
+      target.contacts=target.contacts||[];
+      let ct=target.contacts.find(x=>nameEq(x.name,p.name));
+      if(!ct){ct={id:uid(),name:p.name,role:contactRoleFor(p.role),phone:''};target.contacts.push(ct);}
+      ct.phone=ct.phone||p.phone||'';
+      ct.specialty=ct.specialty||p.specialty||'';
+      ct.influence=ct.influence||p.influence||'';
+      ct.rel=ct.rel||p.rel||'';
+      if(p.notes&&!(ct.notes||'').includes(p.notes))ct.notes=[ct.notes,p.notes].filter(Boolean).join(' · ');
+      if(/referral|refer/i.test(p.role||''))ct.referrer=true;
+      SEG_KEYS.forEach(k=>{if(p[k]&&!ct[k])ct[k]=p[k];});
+      (p.calls||[]).forEach(v=>{
+        target.calls=target.calls||[];
+        if(!target.calls.some(x=>x.id===v.id))target.calls.push(Object.assign({},v,{with:p.name}));
+      });
+      moved++;
+    }else keep.push(p);
+  });
+  if(moved){S.people=keep;localStorage.setItem(LS_KEY,JSON.stringify(S));}
+  return moved;
 }
 function linkPersonClinic(p){
   if(!p.clinic){
@@ -1482,6 +1521,7 @@ function dumpTypeChanged(i){dumpReadDOM();renderDumpSort();}
 function ensurePerson(name,ctx){
   if(!name)return '';
   if(S.clinics.some(c=>c.name===name))return name;
+  for(const c of S.clinics){const ct=contacts(c).find(x=>nameEq(x.name,name));if(ct)return ct.name;}
   if(S.people.some(p=>nameEq(p.name,name)))return S.people.find(p=>nameEq(p.name,name)).name;
   if(/^dr\.?\s/i.test(name.trim())){
     const np={id:uid(),name:name.trim(),role:'Doctor',org:'',specialty:'',phone:'',city:'Kalaburagi',clinic:'',source:'',influence:'',rel:'New',notes:'Auto-created from: '+ctx};
@@ -1508,9 +1548,14 @@ function dumpSaveAll(){
     }
     else if(it.type==='person'){
       const nm=(it.name||it.text).trim();
-      if(nm&&!S.people.some(p=>p.name.toLowerCase()===nm.toLowerCase())){
-        const np={id:uid(),name:nm,role:'Doctor',org:'',specialty:it.specialty||'',phone:'',city:it.city||'Kalaburagi',clinic:it.link||'',source:'',influence:'',rel:'New',notes:it.noteTxt!==undefined?it.noteTxt:it.text};
-        S.people.push(np);linkPersonClinic(np);
+      const cl=it.link?S.clinics.find(c=>c.name===it.link):null;
+      if(nm&&cl){
+        cl.contacts=cl.contacts||[];
+        if(!contacts(cl).some(x=>nameEq(x.name,nm)))cl.contacts.push({id:uid(),name:nm,role:'Doctor',phone:'',specialty:it.specialty||'',notes:it.noteTxt||''});
+        if(!(cl.doctors||[]).some(d=>nameEq(d,nm)))cl.doctors=[...(cl.doctors||[]),nm];
+      }else if(nm&&!S.people.some(p=>nameEq(p.name,nm))){
+        const np={id:uid(),name:nm,role:'Referring doctor',org:'',specialty:it.specialty||'',phone:'',city:it.city||'Kalaburagi',clinic:'',source:'',influence:'',rel:'New',notes:it.noteTxt!==undefined?it.noteTxt:it.text,calls:[],broughtClinics:[]};
+        S.people.push(np);
       }
     }
     else if(it.type==='visit'){
@@ -2384,6 +2429,7 @@ function convSave(){
   jlog('call','Conversation logged — '+obj.name+(o.summary?': '+o.summary.slice(0,70):''),conv.date);
   const dk=conv.kind,di=conv.id;
   conv=null;closeModal();save();render();
+  tidyPeople();
   if(S.meta.aiKey)setTimeout(()=>debrief(dk,di),700);
   const bits=[];
   if(vlog)bits.push('visit logged');
@@ -3728,6 +3774,7 @@ function vData(){
     +'<p style="font-size:13.5px;line-height:1.6">Everything entered before recent updates gets the newer treatment: conversation tags, timestamps, clean dates, doctors and receptionists created and linked, tasks connected to their clinic, and your existing specialties, cities and brands remembered as options. Nothing is deleted.</p>'
     +'<button class="btn sm" onclick="repairData()">Run the upgrade</button></div>';
   h+='<h2>App version</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Running <b>v'+APP_VERSION+'</b>. If a device is stuck on an old version, tap below — it clears the offline cache and reloads the newest build. Your data is not affected.</p><button class="btn sm sec" onclick="forceUpdate()">Force update now</button></div>';
+  h+='<h2>What&rsquo;s new</h2><div class="card">'+CHANGELOG.slice(0,6).map(c=>'<div style="margin-bottom:10px"><b style="color:var(--teal)">v'+c.v+'</b> <span class="muted" style="font-size:12px">'+esc(c.date)+'</span><ul style="margin:4px 0 0 16px;font-size:13px;line-height:1.55">'+c.what.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>').join('')+'</div>';
   h+='<h2>Danger zone</h2><div class="card"><button class="btn sec" style="color:var(--red);border-color:var(--red)" onclick="resetAll()">Reset to seed data</button></div>';
   return h;
 }
@@ -4337,7 +4384,8 @@ function doRestore(inp){
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 backfillTags();
 if(S.meta.repairedAt!=='11.3'){try{repairData(true);S.meta.repairedAt='11.3';}catch(e){}}
-try{const mv=migrateToAccounts();if(mv)setTimeout(()=>toast(mv+' clinic contacts moved into their clinics'),1200);}catch(e){}
+try{const mv=migrateToAccounts();const tp=tidyPeople();const n=mv+tp;
+  if(n)setTimeout(()=>toast(n+' clinic '+(n>1?'people':'person')+' moved into their clinic'),1200);}catch(e){}
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 applyDensity();
 applyNavStyle();
@@ -4346,7 +4394,6 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='12.6';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
