@@ -293,7 +293,7 @@ a{color:var(--teal)}
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v11.1</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v11.3</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -1916,13 +1916,32 @@ async function gemini(parts,opts){
 }
 
 /* ---------- RELATIONSHIP TRAIL: every touch, in order ---------- */
+function relatedFor(kind,obj){
+  /* the clinic and its doctors/staff are one relationship — gather both sides */
+  if(kind==='clinic'){
+    const people=S.people.filter(p=>p.clinic===obj.name||(obj.doctors||[]).some(d=>nameEq(d,p.name))||nameEq(p.name,obj.whoAnswers));
+    return {clinics:[obj],people};
+  }
+  const clinics=S.clinics.filter(c=>(c.doctors||[]).some(d=>nameEq(d,obj.name))||nameEq(c.whoAnswers,obj.name)||c.name===obj.clinic);
+  return {clinics,people:[obj]};
+}
 function trailFor(kind,obj){
   const T=[];
-  const names=kind==='clinic'?[obj.name,...(obj.doctors||[]),obj.whoAnswers].filter(Boolean):[obj.name];
+  const rel=relatedFor(kind,obj);
+  const names=[...rel.clinics.map(c=>c.name),...rel.people.map(p=>p.name),...[].concat(...rel.clinics.map(c=>c.doctors||[])),...rel.clinics.map(c=>c.whoAnswers)].filter(Boolean);
   const isMine=n=>names.some(x=>nameEq(x,n)||x===n);
-  (obj.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',ts:v.ts,type:'visit',title:'Visit',body:v.note||''}));
-  (obj.calls||[]).forEach(c=>T.push({date:c.date,ts:c.ts,type:'call',title:'Conversation'+(c.src==='recording'?' (recording)':''),body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:obj.id,ownerKind:kind}));
-  (obj.stageHistory||[]).forEach(s=>T.push({date:s.date,ts:s.ts,type:'stage',title:'Stage → '+s.stage,body:''}));
+  // visits always belong to a clinic, shown on both the clinic and its people
+  rel.clinics.forEach(c=>(c.visits||[]).forEach(v=>T.push({date:v.date,time:v.time||'',ts:v.ts,type:'visit',
+    title:'Visit'+(kind==='person'?' — '+c.name:''),body:v.note||''})));
+  // conversations, wherever they were logged
+  const addCalls=(owner,ownerKind)=>(owner.calls||[]).forEach(c=>T.push({date:c.date,ts:c.ts,type:'call',
+    title:'Conversation'+(c.src==='recording'?' (recording)':'')+(owner.id!==obj.id?' — with '+owner.name:''),
+    body:c.summary||'',points:c.points||[],objections:c.objections||[],pricing:c.pricing||[],next:c.nextStep||'',
+    sentiment:c.sentiment||'',tags:c.tags||[],callId:c.id,ownerId:owner.id,ownerKind}));
+  rel.clinics.forEach(c=>addCalls(c,'clinic'));
+  rel.people.forEach(p=>addCalls(p,'person'));
+  rel.clinics.forEach(c=>(c.stageHistory||[]).forEach(s=>T.push({date:s.date,ts:s.ts,type:'stage',
+    title:'Stage → '+s.stage+(kind==='person'?' ('+c.name+')':''),body:''})));
   [...S.followups,...S.me.followups].forEach(f=>{
     if(!isMine(f.who))return;
     T.push({date:f.created||f.due||'',ts:f.ts,type:'promise',title:(f.done?'Promise kept: ':'Promise: ')+f.text,body:f.due?('due '+fmtDs(f.due)):''});
@@ -2019,6 +2038,57 @@ function saveTags(kind,ownerId,callId){
   c.tags=[...document.querySelectorAll('#tagchips button.on')].map(b=>b.textContent);
   save();closeModal();render();toast('Buckets updated ✓');
 }
+/* One-time repair: bring every old record up to the current model */
+function repairData(silent){
+  const log=[];
+  // 1. tags on old conversations
+  const n=backfillTags();if(n)log.push(n+' conversations tagged');
+  // 2. timestamps where missing (use the record's date so ordering stays sane)
+  let ts=0;
+  const stamp=(o,d)=>{if(o&&!o.ts){o.ts=(normDate(d)||todayISO())+'T09:00:00.000Z';ts++;}};
+  S.clinics.forEach(c=>{stamp(c,c.stageHistory&&c.stageHistory[0]&&c.stageHistory[0].date);
+    (c.visits||[]).forEach(v=>stamp(v,v.date));(c.calls||[]).forEach(v=>stamp(v,v.date));
+    (c.stageHistory||[]).forEach(s2=>stamp(s2,s2.date));});
+  S.people.forEach(p=>{(p.calls||[]).forEach(v=>stamp(v,v.date));});
+  [...S.sequence,...S.me.sequence].forEach(t=>stamp(t,t.created));
+  [...S.followups,...S.me.followups].forEach(f=>stamp(f,f.created||f.due));
+  S.journey.forEach(j=>stamp(j,j.date));
+  if(ts)log.push(ts+' records timestamped');
+  // 3. normalise every date
+  let dts=0;
+  const fix=(o,k)=>{if(o&&o[k]){const nd=normDate(o[k]);if(nd&&nd!==o[k]){o[k]=nd;dts++;}}};
+  S.clinics.forEach(c=>{(c.visits||[]).forEach(v=>fix(v,'date'));(c.calls||[]).forEach(v=>fix(v,'date'));(c.stageHistory||[]).forEach(s2=>fix(s2,'date'));});
+  S.people.forEach(p=>(p.calls||[]).forEach(v=>fix(v,'date')));
+  S.followups.concat(S.me.followups).forEach(f=>{fix(f,'due');fix(f,'created');});
+  S.decisions.forEach(d=>fix(d,'date'));
+  S.journey.forEach(j=>fix(j,'date'));
+  if(dts)log.push(dts+' dates cleaned');
+  // 4. doctors created from clinics, receptionists created, links both ways
+  let people=0;
+  S.clinics.forEach(c=>{
+    const before=S.people.length;
+    linkClinicDoctor(c);linkClinicStaff(c);
+    people+=S.people.length-before;
+  });
+  S.people.forEach(p=>linkPersonClinic(p));
+  if(people)log.push(people+' people created from clinic records');
+  // 5. link loose tasks/follow-ups to a clinic or person by name
+  let links=0;
+  [...S.sequence,...S.me.sequence].forEach(t=>{if(!t.link){const l=autoLink(t.title+' '+(t.notes||''));if(l){t.link=l;links++;}}});
+  if(links)log.push(links+' tasks linked to a clinic or person');
+  // 6. custom option lists learn from what already exists
+  let opts=0;
+  const learn=(kind,val)=>{if(!val)return;const list=optList(kind);if(!list.some(o=>o.toLowerCase()===String(val).toLowerCase())){addCustom(kind,val);opts++;}};
+  S.clinics.forEach(c=>{learn('specialty',c.specialty);learn('city',c.city);learn('source',c.source);learn('brand',c.brand);});
+  S.people.forEach(p=>{learn('specialty',p.specialty);learn('city',p.city);learn('source',p.source);learn('role',p.role);});
+  if(opts)log.push(opts+' options remembered');
+  // 7. defaults for anything still missing
+  S.clinics.forEach(c=>{c.calls=c.calls||[];c.visits=c.visits||[];c.stageHistory=c.stageHistory||[];if(!Array.isArray(c.doctors))c.doctors=[];});
+  S.people.forEach(p=>{p.calls=p.calls||[];});
+  save();render();
+  if(!silent)alert(log.length?('Old data brought up to date:\n\n• '+log.join('\n• ')):'Everything was already up to date.');
+  return log;
+}
 function retagAll(){
   const doIt=arr=>(arr||[]).forEach(o=>(o.calls||[]).forEach(v=>{v.tags=null;}));
   doIt(S.clinics);doIt(S.people);
@@ -2070,8 +2140,14 @@ function openConv(kind,id){
   renderConvInput();
 }
 function renderConvInput(){
+  const rel=relatedFor(conv.kind,conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id))||{clinics:[],people:[]};
+  const others=[...rel.clinics,...rel.people].filter(o=>o.id!==conv.id);
   $('modal').innerHTML='<h3>Log — '+esc(conv.name)+'</h3>'
     +'<div class="note" style="margin-bottom:10px">One place for everything: say what happened and I’ll produce the <b>visit</b>, the <b>key points</b>, <b>promises → follow-ups</b>, <b>tasks</b> and any <b>stage change</b>. You review before anything saves.</div>'
+    +(others.length?'<div class="hl info" style="margin-bottom:10px"><i class="dot"></i><div>This will also show on '+others.map(o=>esc(o.name)).join(', ')+' — clinic and doctor share one history.'
+      +'<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'+[{id:conv.id,name:conv.name,kind:conv.kind},...others.map(o=>({id:o.id,name:o.name,kind:S.clinics.some(c=>c.id===o.id)?'clinic':'person'}))]
+        .map(o=>'<button class="btn sm '+(o.id===conv.id?'':'sec')+'" style="padding:4px 10px;font-size:11.5px" onclick="openConv(\''+o.kind+'\',\''+o.id+'\')">file on '+esc(o.name.split(' ').slice(0,2).join(' '))+'</button>').join('')
+      +'</div></div></div>':'')
     +'<div class="f"><label>Call recording file (mp3 · m4a · wav · under ~10 min)</label><input type="file" id="cvfile" accept="audio/*"></div>'
     +'<div class="subtle" style="text-align:center;margin:6px 0">— or —</div>'
     +'<div class="f"><label>What was discussed</label><textarea id="cvtxt" style="min-height:120px" placeholder="Dictate or paste the transcript…"></textarea></div>'
@@ -3060,6 +3136,9 @@ function vData(){
     +'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" onclick="saveHook()">Save</button><button class="btn sm sec" onclick="hookSend()">Send now (test)</button><button class="btn sm sec" onclick="downloadExport()">Download payload sample</button></div>'
     +'<div class="note">'+(hk.lastAt?('Last sent '+esc(hk.lastAt.slice(0,10))+' '+esc(hk.lastAt.slice(11,16))):'Never sent')+(hk.lastErr?(' · last error: '+esc(hk.lastErr)):'')+'</div>'
     +'<div class="note">Payload <code>desklens-hq/1</code>: clinics, people, sequence, followups, decisions, questions, journey, inbox, personal — every record carries a stable <code>id</code> for server-side upsert.</div></div>';
+  h+='<h2>Bring old data up to date</h2><div class="card">'
+    +'<p style="font-size:13.5px;line-height:1.6">Everything entered before recent updates gets the newer treatment: conversation tags, timestamps, clean dates, doctors and receptionists created and linked, tasks connected to their clinic, and your existing specialties, cities and brands remembered as options. Nothing is deleted.</p>'
+    +'<button class="btn sm" onclick="repairData()">Run the upgrade</button></div>';
   h+='<h2>App version</h2><div class="card"><p style="font-size:13.5px;line-height:1.6">Running <b>v'+APP_VERSION+'</b>. If a device is stuck on an old version, tap below — it clears the offline cache and reloads the newest build. Your data is not affected.</p><button class="btn sm sec" onclick="forceUpdate()">Force update now</button></div>';
   h+='<h2>Danger zone</h2><div class="card"><button class="btn sec" style="color:var(--red);border-color:var(--red)" onclick="resetAll()">Reset to seed data</button></div>';
   return h;
@@ -3667,6 +3746,7 @@ function doRestore(inp){
 /* ================= INIT ================= */
 $('hdate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 backfillTags();
+if(S.meta.repairedAt!=='11.3'){try{repairData(true);S.meta.repairedAt='11.3';}catch(e){}}
 localStorage.setItem(LS_KEY,JSON.stringify(S));
 applyDensity();
 applyNavStyle();
@@ -3675,7 +3755,7 @@ if(fbCfg())initSync(true);
 setTimeout(()=>checkUpdate(),2500);
 setTimeout(()=>notifyDue(),3000);
 /* Self-update: detect a newer version on the server and offer one-tap refresh */
-const APP_VERSION='11.1';
+const APP_VERSION='11.3';
 async function checkUpdate(){
   if(!location.protocol.startsWith('http'))return;
   try{
