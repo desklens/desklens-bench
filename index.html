@@ -288,12 +288,14 @@ a{color:var(--teal)}
 .goalbar{height:8px;background:#F4EFE5;border-radius:99px;overflow:hidden;margin:8px 0 4px}
 .goalbar i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--teal-mid));border-radius:99px}
 .jdate{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:16px 0 8px}
+.segbtn{display:flex;align-items:center;gap:7px;font-size:13px;padding:8px 12px;border:1.5px solid var(--line);border-radius:10px;cursor:pointer;background:var(--card);flex:1;min-width:150px}
+.segbtn:has(input:checked){border-color:var(--teal);background:rgba(15,118,110,.07);font-weight:600}
 </style>
 </head>
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v12.8</span></div>
+    <div class="logo">DeskLens <span>HQ</span> <span style="font-size:10px;font-weight:600;background:rgba(255,255,255,.15);padding:2px 7px;border-radius:99px;vertical-align:middle">v13.0</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="openAsk()" title="Ask your data (press a)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">✦</button>
       <button onclick="openSearch()" title="Search everything (press /)" style="background:rgba(255,255,255,.14);border:none;color:#fff;width:34px;height:34px;border-radius:99px;font-size:15px;cursor:pointer;font-family:inherit">⌕</button>
@@ -310,10 +312,12 @@ a{color:var(--teal)}
 <script>
 'use strict';
 /* ================= CORE ================= */
-const APP_VERSION='12.8';
+const APP_VERSION='13.0';
 /* CHANGELOG — single source of truth for the project bible. Claude appends one entry per version.
    Format: {v, date, what[]}  — newest first. Do not reformat; the bible sync reads this block. */
 const CHANGELOG=[
+ {v:'13.0',date:'2026-08-20',what:['One Log window instead of two — the AI decides whether you spoke to them or just learned it, you correct it with one tap','Generated clinic profile: who they are, state of play, real blocker, open loops, what changed, what you still do not know, and the next move — derived from every log, nothing typed','Profile is cached and free to read; it tells you how many new logs have landed since it was written and you choose when to refresh','Every claim in the profile can be traced back to the log it came from']},
+ {v:'12.9',date:'2026-08-20',what:['Separated what you LEARN from who you SPOKE to — "What I know" records an observation without it counting as contact, so cadence and going-cold stay honest','Every fact on a clinic now carries how you know it and when — verified, second-hand, or a guess','Facts that are second-hand and older than 60 days are flagged "worth confirming before you pitch"']},
  {v:'12.8',date:'2026-08-20',what:['Sync now MERGES instead of overwriting — a device can no longer wipe records it has never seen (this was the cause of the lost clinic)','Restore points: a full copy of this device kept on opening, every hour, on closing, and before any migration — 15 kept, never touched by sync','Nothing is deleted any more — deleted items move to Data → Recover and can be put back','Data → Recover shows record counts so a drop is visible immediately','Fixed a timezone bug: anything entered before 5:30am was being dated to the previous day','One conversation is now ONE entry on the trail — the visit, tasks and promises it created are listed inside it instead of repeating the same text four times']},
  {v:'12.7',date:'2026-08-20',what:['Clinic staff no longer leak into People — doctors and receptionists live inside their clinic as contacts','tidyPeople() runs on every load and after every conversation: folds stray clinic people back in, moves their conversations with them, strips "Name:" prefixes from voice-created records','Voice-created doctors attached to a clinic become clinic contacts, not network People']},
  {v:'12.6',date:'2026-08-20',what:['Fixed Insights crash when a numeric value (review count, goal progress) reached the escaper']},
@@ -2212,6 +2216,8 @@ function trailFor(kind,obj){
     wasVisit:!!visitByCall[c.id],time:(visitByCall[c.id]||{}).time||'',spawned:spawn[c.id]||[]}));
   rel.clinics.forEach(c=>addCalls(c,'clinic'));
   rel.people.forEach(p=>addCalls(p,'person'));
+  rel.clinics.forEach(c=>(c.learned||[]).forEach(l=>T.push({date:l.date,ts:l.ts,type:'learn',
+    title:'Learned'+(kind==='person'?' — '+c.name:''),body:l.note||'',src:l.src||'',tags:l.tags||[]})));
   rel.clinics.forEach(c=>(c.stageHistory||[]).forEach(s=>T.push({date:s.date,ts:s.ts,type:'stage',
     title:'Stage → '+s.stage+(kind==='person'?' ('+c.name+')':''),body:''})));
   [...S.followups,...S.me.followups].forEach(f=>{
@@ -2227,7 +2233,7 @@ function trailFor(kind,obj){
 function trailHTML(kind,obj){
   const T=trailFor(kind,obj);
   if(!T.length)return '<div class="empty">No history yet. Log a visit or a conversation.</div>';
-  const col={visit:'#BE185D',call:'#0F766E',stage:'#0369A1',promise:'#B4711F',task:'#4D7C0F'};
+  const col={visit:'#BE185D',call:'#0F766E',stage:'#0369A1',promise:'#B4711F',task:'#4D7C0F',learn:'#A8A29E'};
   let h='<div class="tl">',lastM='';
   T.forEach(e=>{
     const m=new Date(e.date+'T00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'});
@@ -2242,6 +2248,7 @@ function trailHTML(kind,obj){
       +((e.pricing&&e.pricing.length)?'<div class="m"><span class="pill">pricing</span> '+e.pricing.map(esc).join(' · ')+'</div>':'')
       +(e.next?'<div class="m"><b>Next:</b> '+esc(e.next)+'</div>':'')
       +((e.spawned&&e.spawned.length)?'<div class="m subtle" style="font-size:12px;margin-top:4px">↳ '+e.spawned.map(esc).join(' · ')+'</div>':'')
+      +(e.type==='learn'?'<div class="subtle" style="font-size:11.5px;margin-top:3px">'+esc(e.src||'source not recorded')+' · not counted as contact</div>':'')
       +(e.callId?'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+tagPills(e.tags)
         +'<button class="btn sm sec" style="padding:2px 8px;font-size:11px;margin-top:5px" onclick="editTags(\''+e.ownerKind+'\',\''+e.ownerId+'\',\''+e.callId+'\')">tags</button></div>':tagPills(e.tags))
       +'</div>';
@@ -2252,8 +2259,10 @@ function relAnalysis(kind,obj){
   const T=trailFor(kind,obj);
   if(!T.length)return '';
   const visits=T.filter(x=>x.type==='visit'),calls=T.filter(x=>x.type==='call');
-  const touches=visits.length+calls.length;
-  const first=T[T.length-1].date,last=T[0].date;
+  const touches=visits.length+calls.length;          /* 'learn' entries are knowledge, not contact */
+  const contactT=T.filter(x=>x.type==='visit'||x.type==='call');
+  if(!contactT.length)return '<div class="note">Nothing logged as contact yet — what you know is on the trail, but you have not spoken to them.</div>';
+  const first=contactT[contactT.length-1].date,last=contactT[0].date;
   const span=Math.max(1,Math.round((new Date(last)-new Date(first))/864e5));
   const gap=touches>1?Math.round(span/(touches-1)):null;
   const sinceTouch=daysAgo(last);
@@ -2407,6 +2416,138 @@ function tagPills(tags){
   return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'+tags.map(t=>'<span class="pill '+(col[t]||'grey')+'">'+esc(t)+'</span>').join('')+'</div>';
 }
 
+/* ================= WHAT I KNOW — observations, not conversations =================
+   A conversation is an EVENT (it counts as contact). An observation is STATE
+   (something you learned any other way). Both fill the clinic record; only the
+   conversation counts as a touch, so cadence and going-cold stay honest. ============ */
+const KNOW_SRC=['I saw it myself','The doctor told me','The receptionist told me','Another doctor told me',
+               'Their staff told me','Google / online','A channel partner told me','I am assuming this'];
+const HARD_SRC=['I saw it myself','The doctor told me'];        // treated as verified
+const FACT_STALE_DAYS=60;
+
+function provOf(c,k){return ((c.prov||{})[k])||null;}
+/* stamp where a fact came from, every single time one is written */
+function stampProv(c,k,src,date){
+  c.prov=c.prov||{};
+  c.prov[k]={src:src||'Not recorded',at:date||todayISO(),ts:nowStamp()};
+}
+function provNote(c,k){
+  const p=provOf(c,k);
+  if(!p)return '<span class="subtle" style="font-size:11px">· source not recorded</span>';
+  const age=daysAgo(normDate(p.at));
+  const soft=HARD_SRC.indexOf(p.src)<0;
+  const stale=age>FACT_STALE_DAYS;
+  const warn=(soft&&stale)||p.src==='I am assuming this';
+  return '<span class="subtle" style="font-size:11px">· '+esc(p.src)+' · '+esc(fmtDs(p.at))+'</span>'
+    +(warn?' <span class="pill amber" style="font-size:10px">verify</span>':'');
+}
+/* facts worth re-checking before a pitch */
+/* only the facts that actually gate a pilot are chased when their source is unknown —
+   city and specialty do not need a provenance trail */
+const CRITICAL_FACTS=['brand','handset','whoAnswers','phone'];
+function softFacts(c){
+  const out=[];
+  Object.keys(FACT_LABELS).forEach(k=>{
+    if(!String(c[k]||'').trim())return;
+    const p=provOf(c,k);
+    if(!p){if(CRITICAL_FACTS.indexOf(k)>=0)out.push({k,label:FACT_LABELS[k],why:'source never recorded'});return;}
+    if(p.src==='I am assuming this'){out.push({k,label:FACT_LABELS[k],why:'you were guessing'});return;}
+    if(HARD_SRC.indexOf(p.src)<0&&daysAgo(normDate(p.at))>FACT_STALE_DAYS)
+      out.push({k,label:FACT_LABELS[k],why:'second-hand, '+daysAgo(normDate(p.at))+' days old'});
+  });
+  return out;
+}
+
+let learn=null;
+function openLearn(id){
+  const c=S.clinics.find(x=>x.id===id);if(!c)return;
+  learn={id,name:c.name,out:null};
+  renderLearnInput();
+}
+function renderLearnInput(){
+  $('modal').innerHTML='<h3>What I know — '+esc(learn.name)+'</h3>'
+    +'<div class="note" style="margin-bottom:10px">For anything you learned <b>without</b> speaking to them — you saw it, read it, or heard it from someone else. It updates the clinic record but does <b>not</b> count as contact.</div>'
+    +'<div class="f"><label>What did you learn?</label><textarea id="lntxt" style="min-height:110px" placeholder="They have a new branch on Sedam Road. Front desk uses a Samsung. 320 reviews on Google, 4.2 stars."></textarea></div>'
+    +'<div class="f"><label>How do you know this?</label><select id="lnsrc">'+KNOW_SRC.map(s=>'<option>'+esc(s)+'</option>').join('')+'</select></div>'
+    +'<div class="f"><label>When did you learn it?</label><input type="date" id="lndate" value="'+todayISO()+'"></div>'
+    +'<div class="mbtns"><button class="btn sec" onclick="closeModal();learn=null">Cancel</button><button class="btn" onclick="learnRun()">Read it →</button></div>';
+  $('overlay').classList.add('open');
+}
+async function learnRun(){
+  const txt=($('lntxt')&&$('lntxt').value||'').trim();
+  if(!txt){toast('Type or dictate what you learned');return;}
+  learn.src=$('lnsrc').value;learn.date=$('lndate').value||todayISO();learn._txt=txt;
+  const c=S.clinics.find(x=>x.id===learn.id);
+  if(!S.meta.aiKey){learn.out={note:txt,clinicFacts:factsFromText(txt,c)};renderLearnReview();return;}
+  $('modal').innerHTML='<h3>Reading…</h3><div class="note">Pulling out the facts.</div>';
+  const instruction='Vinay (founder of DeskLens) noted something he learned about the clinic "'+learn.name+'". '
+    +'These are his private field notes — he already knows his own product, price and strategy, never restate them. '
+    +'Return ONLY what is new about THEM. Today is '+todayISO()+'.\n'
+    +'JSON: {"note":"one clean sentence, his own facts, no padding and no echoing his phrasing",'
+    +'"clinicFacts":{"brand":"","handset":"","phone":"","whoAnswers":"","whoAnswersPhone":"","reviews":"","city":"","specialty":"","doctors":[]},'
+    +'"software":[{"name":"","cat":"","feel":""}],"orbit":[{"name":"","who":"","freq":""}],"tags":[]}\n'
+    +'Leave any field empty if he did not say it. Never invent a value.\n\nHIS NOTE:\n'+txt;
+  try{
+    const r=await gemini([{text:instruction}],{json:true});
+    learn.out=r&&r.json?r.json:{note:txt,clinicFacts:factsFromText(txt,c)};
+    if(!learn.out.clinicFacts||!Object.keys(learn.out.clinicFacts).length)learn.out.clinicFacts=factsFromText(txt,c);
+  }catch(e){learn.out={note:txt,clinicFacts:factsFromText(txt,c)};toast('AI unavailable — saved your words as they are');}
+  renderLearnReview();
+}
+function learnFacts(){
+  const c=S.clinics.find(x=>x.id===learn.id);if(!c)return [];
+  const o=learn.out||{};
+  const facts=Object.assign({},factsFromText(learn._txt||'',c),o.clinicFacts||{});
+  const rows=[];
+  Object.keys(FACT_LABELS).forEach(k=>{
+    const v=String(facts[k]||'').trim();if(!v)return;
+    let cur=String(c[k]||'').trim();
+    if(/^(unverified|unknown|other|—|-)$/i.test(cur))cur='';
+    if(cur.toLowerCase()===v.toLowerCase())return;
+    rows.push({k,label:FACT_LABELS[k],from:cur,to:v,isNew:!cur});
+  });
+  ((o.clinicFacts||{}).doctors||[]).forEach(dn=>{
+    if(dn&&!contacts(c).some(x=>nameEq(x.name,dn)))rows.push({k:'doctor',label:'New doctor',from:'',to:dn,isNew:true});
+  });
+  return rows;
+}
+function renderLearnReview(){
+  const o=learn.out||{},rows=learnFacts();
+  let h='<h3>Check before saving</h3>';
+  h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Noted</b><div class="m" style="margin-top:4px">'+esc(o.note||learn._txt)+'</div>'
+    +'<div class="subtle" style="font-size:11.5px;margin-top:6px">'+esc(learn.src)+' · '+esc(fmtDs(learn.date))+'</div></div>';
+  if(rows.length){
+    h+='<div class="card" style="margin-bottom:10px;border-left:4px solid var(--teal)"><b style="font-size:13px">Update the clinic record</b>'
+      +'<div class="note" style="margin:2px 0 6px">Each of these will be stamped with how you know it.</div>'
+      +rows.map((f,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:7px;font-size:13px"><input type="checkbox" id="lnf'+i+'"'+(f.isNew?' checked':'')+' style="margin-top:3px">'
+        +'<span><b>'+esc(f.label)+':</b> '+(f.from?'<span class="subtle" style="text-decoration:line-through">'+esc(f.from)+'</span> → ':'')+esc(f.to)+'</span></label>').join('')+'</div>';
+  }else h+='<div class="note" style="margin-bottom:10px">No clinic fields to change — this will be saved as a note on the trail.</div>';
+  h+='<div class="mbtns"><button class="btn sec" onclick="renderLearnInput()">← Redo</button><button class="btn" onclick="learnSave()">Save ✓</button></div>';
+  $('modal').innerHTML=h;
+}
+function learnSave(){
+  const c=S.clinics.find(x=>x.id===learn.id);if(!c)return;
+  const o=learn.out||{};
+  const lid=uid();
+  c.learned=c.learned||[];
+  c.learned.push({id:lid,date:learn.date,ts:nowStamp(),src:learn.src,note:o.note||learn._txt,tags:o.tags||[]});
+  let n=0;
+  learnFacts().forEach((f,i)=>{
+    const cb=$('lnf'+i);if(cb&&!cb.checked)return;
+    if(f.k==='doctor'){
+      c.contacts=c.contacts||[];
+      if(!contacts(c).some(x=>nameEq(x.name,f.to)))c.contacts.push({id:uid(),name:f.to,role:'Doctor',phone:''});
+      if(!(c.doctors||[]).some(d=>nameEq(d,f.to)))c.doctors=[...(c.doctors||[]),f.to];
+    }else{c[f.k]=f.to;stampProv(c,f.k,learn.src,learn.date);}
+    n++;
+  });
+  (o.software||[]).forEach(s=>{if(!s||!s.name)return;c.systems=c.systems||[];
+    if(!c.systems.some(x=>nameEq(x.name,s.name)))c.systems.push({id:uid(),name:s.name,cat:s.cat||'',feel:s.feel||'',src:learn.src});});
+  (o.orbit||[]).forEach(x=>{if(!x||!x.name)return;c.orbit=c.orbit||[];
+    if(!c.orbit.some(y=>nameEq(y.name,x.name)))c.orbit.push({id:uid(),name:x.name,who:x.who||'',freq:x.freq||'',src:learn.src});});
+  save();closeModal();learn=null;render();
+  toast(n?('Saved — '+n+' field'+(n>1?'s':'')+' updated'):'Noted ✓');
+}
 /* ---------- CONVERSATION IMPORT (audio or transcript) ---------- */
 let conv=null;
 function openConv(kind,id){
@@ -2464,7 +2605,7 @@ async function convRun(){
     +'"commitments":[{"who":"Vinay or their name","what":"promise","due":"YYYY-MM-DD or empty"}],'
     +'"objections":["pushback in their words"],"pricing":["price/budget/competitor mentions"],'
     +'"people":[{"name":"","role":""}],"nextStep":"clearest next action",'
-    +'"wasVisit":true_if_he_physically_went_there_else_false,"visitTime":"HH:MM if a time was mentioned else empty",'
+    +'"spokeToThem":true_if_he_actually_talked_with_someone_at_this_clinic_false_if_he_only_read_saw_or_heard_it_secondhand,"wasVisit":true_if_he_physically_went_there_else_false,"visitTime":"HH:MM if a time was mentioned else empty",'
     +'"tasks":["things Vinay must do himself that are not promises to them"],'
     +'"clinicFacts":{"brand":"handset brand if mentioned, one of ['+optList('brand').join(' | ')+']","handset":"ok if a recording test passed, fail if it does not record, else empty","phone":"clinic reception number if given","whoAnswers":"receptionist name if named","whoAnswersPhone":"receptionist mobile if given","reviews":"google review count if said","city":"city if said","specialty":"specialty if clear","doctors":["doctor names mentioned as working there"]},'
     +'"software":[{"name":"any software/app/service they said they use","cat":"one of: '+SYS_CATS.join(' | ')+'","feel":"how they spoke about it or empty"}],'
@@ -2563,10 +2704,23 @@ function renderConvReview(){
       +'</div>';
   }
   const visitGuess=(o.wasVisit===true)||/\b(visited|went to|met at|at the clinic|in person)\b/i.test((o.summary||'')+' '+(conv._keep&&conv._keep.txt||''));
+  /* Did contact actually happen? The AI guesses; one tap corrects it.
+     This single field is what keeps cadence and going-cold honest. */
+  const spokeGuess=(o.spokeToThem===false)?false:true;
   h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">File this as</b>'
-    +'<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:13.5px"><input type="checkbox" id="cvvisit"'+(visitGuess?' checked':'')+'> Log a visit on '+fmtD(conv.date)
-    +' <input type="time" id="cvvtime" value="'+esc(o.visitTime||'')+'" style="width:110px;padding:6px;font-size:13px;border:1.5px solid var(--line);border-radius:9px"></label>'
-    +'<div class="note">The summary and key points are always saved to the trail. Tick this if you were physically there.</div></div>';
+    +'<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
+    +'<label class="segbtn"><input type="radio" name="cvmode" value="talk" id="cvmtalk"'+(spokeGuess?' checked':'')+' onchange="convModeUI()"> I spoke to them</label>'
+    +'<label class="segbtn"><input type="radio" name="cvmode" value="learn" id="cvmlearn"'+(!spokeGuess?' checked':'')+' onchange="convModeUI()"> I just learned this</label>'
+    +'</div>'
+    +'<div id="cvtalkbox" style="margin-top:9px">'
+      +'<label style="display:flex;gap:8px;align-items:center;font-size:13.5px"><input type="checkbox" id="cvvisit"'+(visitGuess?' checked':'')+'> I was physically there on '+fmtD(conv.date)
+      +' <input type="time" id="cvvtime" value="'+esc(o.visitTime||'')+'" style="width:110px;padding:6px;font-size:13px;border:1.5px solid var(--line);border-radius:9px"></label>'
+      +'<div class="note">Counts as contact — this is what drives cadence and the going-cold warnings.</div></div>'
+    +'<div id="cvlearnbox" style="margin-top:9px;display:none">'
+      +'<label style="font-size:12.5px;display:block;margin-bottom:4px" class="subtle">How do you know this?</label>'
+      +'<select id="cvsrc" style="width:100%">'+KNOW_SRC.map(s=>'<option>'+esc(s)+'</option>').join('')+'</select>'
+      +'<div class="note">Saved to the record and the trail, but <b>not</b> counted as contact.</div></div>'
+    +'</div>';
   if(o.tasks&&o.tasks.length){
     h+='<div class="card" style="margin-bottom:10px"><b style="font-size:13px">Tasks for you</b>'
       +o.tasks.map((t,i)=>'<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px"><input type="checkbox" id="cvt'+i+'" checked style="margin-top:3px"><span>'+esc(t)+'</span></label>').join('')
@@ -2578,9 +2732,42 @@ function renderConvReview(){
   h+='<div class="mbtns"><button class="btn sec" onclick="renderConvInput()">← Redo</button><button class="btn" onclick="convSave()">Save to '+esc(conv.name.split(' ')[0])+' ✓</button></div>';
   $('modal').innerHTML=h;
 }
+/* Saved from the same window, but filed as knowledge rather than contact. */
+function convSaveAsLearned(c){
+  const o=conv.out||{};
+  const src=($('cvsrc')&&$('cvsrc').value)||'Not recorded';
+  c.learned=c.learned||[];
+  c.learned.push({id:uid(),date:conv.date,ts:nowStamp(),src:src,
+    note:o.summary||((conv._keep&&conv._keep.txt)||''),points:o.points||[],tags:convTagsFrom(o)});
+  let n=0;
+  pendingFacts().forEach((f,i)=>{
+    const cb=$('cvf'+i);if(cb&&!cb.checked)return;
+    if(f.k==='doctor'){
+      c.contacts=c.contacts||[];
+      if(!contacts(c).some(x=>nameEq(x.name,f.to)))c.contacts.push({id:uid(),name:f.to,role:'Doctor',phone:''});
+      if(!(c.doctors||[]).some(d=>nameEq(d,f.to)))c.doctors=[...(c.doctors||[]),f.to];
+    }else{c[f.k]=f.to;stampProv(c,f.k,src,conv.date);}
+    n++;
+  });
+  (o.software||[]).forEach(s=>{if(!s||!s.name)return;c.systems=c.systems||[];
+    if(!c.systems.some(x=>nameEq(x.name,s.name)))c.systems.push({id:uid(),name:s.name,cat:s.cat||'',feel:s.feel||'',src:src});});
+  (o.orbit||[]).forEach(x=>{if(!x||!x.name)return;c.orbit=c.orbit||[];
+    if(!c.orbit.some(y=>nameEq(y.name,x.name)))c.orbit.push({id:uid(),name:x.name,who:x.who||'',freq:x.freq||'',src:src});});
+  markProfileStale(c);
+  save();closeModal();conv=null;render();
+  toast(n?('Noted — '+n+' field'+(n>1?'s':'')+' updated, not counted as contact'):'Noted — not counted as contact');
+}
+function convModeUI(){
+  const learn=$('cvmlearn')&&$('cvmlearn').checked;
+  if($('cvtalkbox'))$('cvtalkbox').style.display=learn?'none':'block';
+  if($('cvlearnbox'))$('cvlearnbox').style.display=learn?'block':'none';
+}
 function convSave(){
   const o=conv.out||{},obj=conv.kind==='clinic'?S.clinics.find(c=>c.id===conv.id):S.people.find(p=>p.id===conv.id);
   if(!obj)return;
+  /* ONE window, two outcomes: a conversation is contact, an observation is knowledge. */
+  const asLearn=$('cvmlearn')&&$('cvmlearn').checked;
+  if(asLearn&&conv.kind==='clinic'){convSaveAsLearned(obj);return;}
   obj.calls=obj.calls||[];
   const callId=uid();
   obj.calls.push({id:callId,date:conv.date,ts:nowStamp(),src:conv.src,summary:o.summary||'',points:o.points||[],
@@ -2625,7 +2812,7 @@ function convSave(){
         if(!contacts(obj).some(x=>nameEq(x.name,f.to))){obj.contacts.push({id:uid(),name:f.to,role:'Doctor',phone:''});facts++;}
         if(!(obj.doctors||[]).some(d=>nameEq(d,f.to)))obj.doctors=[...(obj.doctors||[]),f.to];
       }else{
-        obj[f.k]=f.to;facts++;
+        obj[f.k]=f.to;stampProv(obj,f.k,'The doctor told me',conv.date);facts++;
         if(f.k==='whoAnswers'){
           obj.contacts=obj.contacts||[];
           if(!contacts(obj).some(x=>nameEq(x.name,f.to)))obj.contacts.push({id:uid(),name:f.to,role:'Receptionist',phone:obj.whoAnswersPhone||''});
@@ -3139,22 +3326,33 @@ function orbitHTML(c){
 
 /* ---------- PRE-VISIT BRIEF ---------- */
 function clinicDossier(c){
-  const doctors=S.people.filter(p=>(c.doctors||[]).some(d=>nameEq(d,p.name)));
-  const rec=S.people.find(p=>nameEq(p.name,c.whoAnswers));
+  /* accounts model: the people are the clinic's contacts, not People records */
+  const cts=contacts(c);
   return {
-    clinic:{name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,source:c.source||'',reviews:c.reviews||'',
-      receptionist:c.whoAnswers||'',handsetBrand:c.brand||'unknown',recordingCapable:brandClass(c.brand),recordingTested:c.handset,
+    clinic:{name:c.name,stage:c.stage,specialty:c.specialty,city:c.city,source:c.source||'',broughtBy:c.broughtBy||'',
+      reviews:c.reviews||'',receptionist:c.whoAnswers||'',handsetBrand:c.brand||'unknown',
+      recordingCapable:brandClass(c.brand),recordingTested:c.handset,
       notes:cut(c.notes,220),lastVisitDaysAgo:lastVisit(c)?daysAgo(lastVisit(c)):null,visits:(c.visits||[]).length,
-      stageHistory:(c.stageHistory||[]).map(s=>s.stage+'@'+s.date)},
-    doctors:doctors.map(p=>({name:p.name,specialty:p.specialty||'',influence:p.influence||'',relationship:p.rel||'',
-      buyingPower:p.power||'',awareness:p.aware||'',valueDriver:p.driver||'',ticket:p.ticket||'',leverage:p.leverage||'',frontDesk:p.desk||'',tech:p.tech||'',notes:cut(p.notes,180)})),
-    receptionist:rec?{name:rec.name,phone:rec.phone||''}:null,
-    conversations:trailFor('clinic',c).filter(x=>x.type==='call').slice(0,6).map(x=>({daysAgo:daysAgo(x.date),said:cut(x.body,260),
-      points:(x.points||[]).slice(0,5),objections:x.objections||[],pricing:x.pricing||[],next:x.next||'',tags:x.tags||[]})),
-    visits:(c.visits||[]).slice(-4).map(v=>({daysAgo:daysAgo(v.date),note:cut(v.note,200)})),
-    openPromises:allFU().filter(f=>[c.name,...(c.doctors||[]),c.whoAnswers].filter(Boolean).some(n=>nameEq(n,f.f.who)))
+      stageHistory:(c.stageHistory||[]).map(s=>s.stage+'@'+s.date),
+      daysAtCurrentStage:(c.stageHistory||[]).length?daysAgo(normDate(c.stageHistory[c.stageHistory.length-1].date)):null},
+    people:cts.map(p=>({name:p.name,role:p.role||'',specialty:p.specialty||'',influence:p.influence||'',relationship:p.rel||'',
+      refersOthers:!!p.referrer,buyingPower:p.power||'',awareness:p.aware||'',valueDriver:p.driver||'',ticket:p.ticket||'',
+      leverage:p.leverage||'',frontDesk:p.desk||'',tech:p.tech||'',notes:cut(p.notes,180)})),
+    /* what he knows and HOW he knows it — soft facts must not be presented as certain */
+    knownFacts:Object.keys(FACT_LABELS).filter(k=>String(c[k]||'').trim()).map(k=>{
+      const pr=provOf(c,k);
+      return {fact:FACT_LABELS[k],value:String(c[k]),source:pr?pr.src:'source not recorded',when:pr?pr.at:''};
+    }),
+    worthConfirming:softFacts(c).map(f=>f.label+' ('+f.why+')'),
+    conversations:trailFor('clinic',c).filter(x=>x.type==='call').slice(0,8).map(x=>({daysAgo:daysAgo(x.date),said:cut(x.body,260),
+      points:(x.points||[]).slice(0,5),objections:x.objections||[],pricing:x.pricing||[],next:x.next||'',tags:x.tags||[],wasVisit:!!x.wasVisit})),
+    learned:(c.learned||[]).slice(-8).map(l=>({daysAgo:daysAgo(normDate(l.date)),note:cut(l.note,220),heardFrom:l.src||''})),
+    visits:(c.visits||[]).slice(-4).map(v=>({daysAgo:daysAgo(normDate(v.date)),note:cut(v.note,200)})),
+    softwareInUse:(c.systems||[]).map(s=>({name:s.name,category:s.cat||'',howTheyFeel:s.feel||''})),
+    whoElseVisits:(c.orbit||[]).map(o=>({name:o.name,who:o.who||'',howOften:o.freq||''})),
+    openPromises:allFU().filter(f=>[c.name,...cts.map(x=>x.name),c.whoAnswers].filter(Boolean).some(n=>nameEq(n,f.f.who)))
       .map(f=>({what:cut(f.f.text,140),due:f.f.due,overdueDays:f.f.due?Math.max(0,-daysTo(f.f.due)):0})),
-    openTasks:S.sequence.filter(t=>!t.done&&(t.link===c.name||(c.doctors||[]).some(d=>nameEq(d,t.link)))).map(t=>cut(t.title,120))
+    openTasks:S.sequence.filter(t=>!t.done&&(t.link===c.name||cts.some(x=>nameEq(x.name,t.link)))).map(t=>cut(t.title,120))
   };
 }
 async function preVisit(id){
@@ -3732,6 +3930,98 @@ function detailHeader(title,pills,meta){
     +(pills?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">'+pills+'</div>':'')
     +(meta?'<div class="m" style="margin-top:4px">'+meta+'</div>':'')+'</div>';
 }
+/* ============ GENERATED CLINIC PROFILE ============
+   Derived from every log, never typed. Cached on the clinic; reading it is free.
+   A counter shows how many logs have landed since it was written. ================= */
+function logCount(c){return ((c.calls||[]).length)+((c.learned||[]).length)+((c.visits||[]).length);}
+function markProfileStale(c){ /* nothing to do — staleness is derived from the count */ }
+function profileStale(c){
+  const p=c.profile;
+  if(!p)return null;
+  const n=logCount(c)-(p.logs||0);
+  return n>0?n:0;
+}
+async function buildProfile(id){
+  const c=S.clinics.find(x=>x.id===id);if(!c)return;
+  if(!S.meta.aiKey){alert('This needs your Gemini key — Data tab → AI power.');return;}
+  const box=$('profbtn');if(box)box.textContent='Reading every log…';
+  try{
+    const out=await gemini([{text:BRAIN_BRIEF
+      +'\n\nBuild Vinay\'s standing profile of ONE clinic from everything he has logged about it. '
+      +'These are his private field notes — he knows his own product, price and strategy, so never restate them. '
+      +'Write only what is true about THEM, drawn from the dossier. Where the record does not say, leave it out — '
+      +'do not infer a personality or a motive that is not evidenced. Short lines, no marketing language. Today is '+todayISO()+'.\n'
+      +'Return ONLY JSON: {'
+      +'"headline":"one line — who this clinic is, as Vinay would say it to Karthik",'
+      +'"who":["3-6 lines of standing fact: the people, the practice, how the front desk runs, what they already use"],'
+      +'"drives":"what this doctor actually wants, in his own terms, with the evidence in brackets",'
+      +'"state":"where the deal really stands right now, one or two sentences",'
+      +'"blocker":"the real thing in the way — say plainly if the stated objection differs from the real one, or empty if none",'
+      +'"open_loops":["anything promised in either direction that is still open, with how old it is"],'
+      +'"changed":["what has changed since the previous logs — leave empty if nothing has"],'
+      +'"unknown":["facts missing from the record that would change how he sells to them"],'
+      +'"next":"the single next move, concrete enough to do tomorrow",'
+      +'"evidence":["date — the specific log line that each major claim rests on, 3-5 items"]}'
+      +'\n\nDOSSIER:\n'+JSON.stringify(clinicDossier(c))}],{temp:0.3,prefer:'gemini-2.5-flash'});
+    c.profile={at:nowStamp(),logs:logCount(c),out:(out&&out.json)?out.json:out};
+    save();render();toast('Profile written ✓');
+  }catch(e){toast('Could not build it: '+e.message);render();}
+}
+function profileHTML(c){
+  const p=c.profile,o=(p&&p.out)||null;
+  const stale=profileStale(c);
+  let h='<h2>Clinic profile</h2>';
+  if(!o){
+    return h+'<div class="card"><p style="font-size:13.5px;line-height:1.6">Built from every log on this clinic — who they are, where the deal stands, and what you still do not know. Nothing to type.</p>'
+      +'<button class="btn sm" id="profbtn" onclick="buildProfile(\''+c.id+'\')">Build profile</button>'
+      +(logCount(c)?'':'<div class="note">Log something first — there is nothing to read yet.</div>')+'</div>';
+  }
+  const L=a=>(a&&a.length)?a:[];
+  h+='<div class="card">';
+  h+='<div style="font-size:15px;font-weight:650;line-height:1.4">'+esc(o.headline||c.name)+'</div>';
+  h+='<div class="subtle" style="font-size:11.5px;margin-top:3px">written '+esc(whenLabel(normDate(p.at),'',p.at))
+    +(stale?' · <b style="color:#B4711F">'+stale+' new log'+(stale>1?'s':'')+' since</b>':' · up to date')+'</div>';
+  if(L(o.who).length)h+='<div style="margin-top:10px">'+o.who.map(x=>'<div class="m" style="margin:3px 0">· '+esc(x)+'</div>').join('')+'</div>';
+  if(o.drives)h+='<div class="hl info" style="margin-top:10px"><i class="dot"></i><div><b>What drives him:</b> '+esc(o.drives)+'</div></div>';
+  h+='</div>';
+  h+='<div class="card" style="margin-top:10px"><b style="font-size:13px">State of play</b>';
+  if(o.state)h+='<div class="m" style="margin-top:5px">'+esc(o.state)+'</div>';
+  if(o.blocker)h+='<div class="hl warn" style="margin-top:8px"><i class="dot"></i><div><b>Real blocker:</b> '+esc(o.blocker)+'</div></div>';
+  if(L(o.open_loops).length)h+='<div style="margin-top:8px"><span class="pill amber">open</span>'+o.open_loops.map(x=>'<div class="m" style="margin:3px 0">· '+esc(x)+'</div>').join('')+'</div>';
+  if(L(o.changed).length)h+='<div style="margin-top:8px"><span class="pill">changed</span>'+o.changed.map(x=>'<div class="m" style="margin:3px 0">· '+esc(x)+'</div>').join('')+'</div>';
+  if(o.next)h+='<div class="hl good" style="margin-top:8px"><i class="dot"></i><div><b>Next move:</b> '+esc(o.next)+'</div></div>';
+  h+='</div>';
+  if(L(o.unknown).length)
+    h+='<div class="card" style="margin-top:10px"><b style="font-size:13px">Still unknown</b>'
+      +o.unknown.map(x=>'<div class="m" style="margin:3px 0">· '+esc(x)+'</div>').join('')
+      +'<div class="note">Ask these on the next visit.</div></div>';
+  if(L(o.evidence).length)
+    h+='<details class="card" style="margin-top:10px"><summary style="font-size:12.5px;cursor:pointer" class="subtle">What this is based on</summary>'
+      +o.evidence.map(x=>'<div class="m" style="margin:4px 0;font-size:12.5px">· '+esc(x)+'</div>').join('')+'</details>';
+  h+='<div style="margin-top:8px"><button class="btn sm '+(stale?'':'sec')+'" id="profbtn" onclick="buildProfile(\''+c.id+'\')">'
+    +(stale?'Refresh — '+stale+' new log'+(stale>1?'s':''):'Rebuild profile')+'</button></div>';
+  return h;
+}
+/* Living profile: every fact with how you know it and when */
+function knowHTML(c){
+  const keys=Object.keys(FACT_LABELS).filter(k=>String(c[k]||'').trim()&&!/^(unverified|unknown)$/i.test(String(c[k])));
+  const soft=softFacts(c);
+  let h='<h2>What I know <span class="cnt">'+keys.length+'</span>'
+   +'<button class="btn sm sec" style="margin-left:auto" onclick="openConv(\'clinic\',\''+c.id+'\')">+ Add</button></h2>';
+  if(!keys.length)return h+'<div class="empty">Nothing recorded yet. Tap <b>+ Add</b> and say what you know — the app works out whether you spoke to them or just learned it.</div>';
+  h+='<div class="card" style="padding:12px">';
+  keys.forEach(k=>{
+    h+='<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line)">'
+      +'<span class="subtle" style="font-size:12.5px;min-width:110px">'+esc(FACT_LABELS[k])+'</span>'
+      +'<span style="flex:1;font-size:13.5px"><b>'+esc(c[k])+'</b><br>'+provNote(c,k)+'</span></div>';
+  });
+  h+='</div>';
+  if(soft.length)h+='<div class="hl warn"><i class="dot"></i><div><b>Worth confirming before you pitch:</b> '
+    +soft.map(f=>esc(f.label)+' <span class="subtle">('+esc(f.why)+')</span>').join(' · ')+'</div></div>';
+  const ln=(c.learned||[]).length;
+  if(ln)h+='<div class="note" style="margin-top:6px">'+ln+' observation'+(ln>1?'s':'')+' on the trail below — these do not count as contact.</div>';
+  return h;
+}
 function vClinicDetail(){
   const c=S.clinics.find(x=>x.id===detail.id);
   if(!c){detail=null;return vPipe();}
@@ -3743,7 +4033,7 @@ function vClinicDetail(){
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">'
     +'<button class="btn sm" onclick="preVisit(\''+c.id+'\')">✦ Prep for visit</button>'
     +'<button class="btn sm sec" onclick="logVisit(\''+c.id+'\')">+ Visit</button>'
-    +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log visit / call</button>'
+    +'<button class="btn sm sec" onclick="openConv(\'clinic\',\''+c.id+'\')">🎧 Log</button>'
     +'<button class="btn sm sec" onclick="addTaskFor(\''+c.id+'\',\'clinic\')">+ Task</button>'
     +'<button class="btn sm sec" onclick="addFUfor(\''+c.id+'\',\'clinic\')">+ Follow-up</button>'
     +'<button class="btn sm sec" onclick="editClinic(\''+c.id+'\')">Edit</button></div>';
@@ -3763,6 +4053,8 @@ function vClinicDetail(){
   const ts=S.sequence.filter(t=>!t.done&&(t.link===c.name||(c.doctors||[]).some(d=>nameEq(d,t.link))));
   h+='<h2>Tasks <span class="cnt">'+ts.length+'</span></h2>';
   h+=ts.map(seqItem).join('')||'<div class="empty">None open.</div>';
+  h+=profileHTML(c);
+  h+=knowHTML(c);
   h+=systemsHTML(c);
   h+=orbitHTML(c);
   h+='<h2>History <span class="cnt">'+trailFor('clinic',c).length+'</span></h2>';
